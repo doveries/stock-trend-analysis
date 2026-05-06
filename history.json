@@ -87,7 +87,7 @@
       "invalidation": 100.11,
       "atr": 6.62,
       "opus_decision": "等待确认",
-      "gpt_decision": "小仓试多",
+      "gpt_decision": "",
       "event_risk": "低"
     },
     "FCX": {
@@ -102,7 +102,7 @@
       "invalidation": 50.68,
       "atr": 2.65,
       "opus_decision": "等待确认",
-      "gpt_decision": "",
+      "gpt_decision": "等待确认",
       "event_risk": "低"
     }
   }
