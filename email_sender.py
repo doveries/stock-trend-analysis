@@ -92,6 +92,29 @@ STYLE = """
 
   .footer { text-align: center; color: #555577; font-size: 11px;
             padding: 16px; border-top: 1px solid #2a2a4e; margin-top: 20px; }
+
+  /* ── 顶部汇总表格 ── */
+  .overview-box { background: #1a1a3e; border: 1px solid #3a3a6e;
+                  border-radius: 10px; padding: 16px 20px; margin-bottom: 20px; }
+  .overview-box h2 { margin: 0 0 12px 0; font-size: 15px; color: #7986cb; }
+  .overview-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .overview-table th { background: #0f0f2a; color: #7986cb; padding: 8px 10px;
+                       text-align: left; font-weight: 600; letter-spacing: 0.5px;
+                       border-bottom: 1px solid #3a3a6e; }
+  .overview-table td { padding: 8px 10px; border-bottom: 1px solid #1a1a3e;
+                       vertical-align: middle; }
+  .overview-table tr:last-child td { border-bottom: none; }
+  .overview-table tr:hover td { background: #1f1f3a; }
+  .ticker-cell { font-weight: bold; font-size: 13px; color: #e0e0e0; }
+  .price-cell  { color: #7986cb; font-weight: 600; }
+  .ai-badge { display: inline-block; padding: 3px 10px; border-radius: 12px;
+              font-size: 11px; font-weight: bold; white-space: nowrap; }
+  .badge-buy    { background: #1b5e20; color: #69f0ae; }
+  .badge-trial  { background: #1b5e20; color: #b9f6ca; }
+  .badge-hold   { background: #1a237e; color: #82b1ff; }
+  .badge-wait   { background: #e65100; color: #ffcc80; }
+  .badge-no     { background: #b71c1c; color: #ff8a80; }
+  .badge-na     { background: #2a2a4e; color: #9e9e9e; }
 </style>
 """
 
@@ -325,6 +348,65 @@ def build_stock_html(result, chart_cid, ai_data=None):
     </div>"""
 
 
+def ai_badge(decision):
+    """根据AI决策返回badge HTML"""
+    if not decision or decision == "N/A":
+        return '<span class="ai-badge badge-na">暂无</span>'
+    if "买入" in decision:
+        return f'<span class="ai-badge badge-buy">{decision}</span>'
+    if "试多" in decision:
+        return f'<span class="ai-badge badge-trial">{decision}</span>'
+    if "持有" in decision:
+        return f'<span class="ai-badge badge-hold">{decision}</span>'
+    if "等待" in decision:
+        return f'<span class="ai-badge badge-wait">{decision}</span>'
+    if "不交易" in decision:
+        return f'<span class="ai-badge badge-no">{decision}</span>'
+    return f'<span class="ai-badge badge-na">{decision}</span>'
+
+
+def build_overview_table(results, ai_results=None):
+    """顶部汇总表格：标的 / 现价 / 趋势 / 阻力 / 支撑 / 失效位 / AI建议"""
+    rows = ""
+    for r in results:
+        if "error" in r:
+            continue
+        ticker = r["ticker"]
+        price  = r["price"]
+        lv     = r["5_levels"]
+        long_c = r["2_long_trend"]["conclusion"]
+        mid_c  = r["3_mid_trend"]["conclusion"]
+        ai     = (ai_results or {}).get(ticker, {})
+        judge  = ai.get("judge", {})
+        fd     = judge.get("final_decision", "") if judge and not judge.get("error") else ""
+        conf   = judge.get("final_confidence", "") if judge and not judge.get("error") else ""
+
+        trend_c = ("bull" if "多头" in long_c else "bear" if "空头" in long_c else "neutral")
+        conf_str = f" ({conf})" if conf else ""
+
+        rows += f"""<tr>
+          <td class="ticker-cell">{ticker}</td>
+          <td class="price-cell">${price}</td>
+          <td class="{trend_c}">{long_c}</td>
+          <td class="{trend_c}">{mid_c}</td>
+          <td class="bear">${lv['resistance']}</td>
+          <td class="bull">${lv['support']}</td>
+          <td class="warn">${lv['invalidation']}</td>
+          <td>{ai_badge(fd)}{conf_str}</td>
+        </tr>"""
+
+    return f"""<div class="overview-box">
+      <h2>📊 今日市场总览</h2>
+      <table class="overview-table">
+        <thead><tr>
+          <th>标的</th><th>现价</th><th>长期趋势</th><th>中期趋势</th>
+          <th>关键阻力</th><th>关键支撑</th><th>结构失效位</th><th>AI建议</th>
+        </tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </div>"""
+
+
 def build_summary_html(results, ai_results=None):
     """执行摘要：优先用AI最终结论，无AI则用技术分析结论"""
     tags = []
@@ -400,6 +482,7 @@ def build_full_html(results, chart_paths, ai_results=None, cost_summary=None):
     <h1>📈 股票技术分析日报 v2</h1>
     <div class="date">{date_str} · 12项框架 + AI三模型综合解读</div>
   </div>
+  {build_overview_table(results, ai_results)}
   {build_summary_html(results, ai_results)}
   {stocks_html}
   {build_cost_html(cost_summary)}

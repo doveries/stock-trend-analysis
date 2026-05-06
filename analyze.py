@@ -19,9 +19,11 @@ REFERENCE_MAP = {
     "GLD":   {"index": "SPY",  "sector": "UUP"},
     "CCJ":   {"index": "SPY",  "sector": "URA"},
     "FCX":   {"index": "SPY",  "sector": "CPER"},
+    "SPY":   {"index": "SPY",  "sector": "SPY"},
+    "QQQ":   {"index": "QQQ",  "sector": "QQQ"},
 }
 
-STOCK_POOL = ["BRK-B", "TSLA", "GLD", "CCJ", "FCX"]
+STOCK_POOL = ["SPY", "QQQ", "BRK-B", "TSLA", "GLD", "CCJ", "FCX"]
 
 # 需要预先拉取的参考ETF（去重）
 ALL_REF_TICKERS = list(set(
