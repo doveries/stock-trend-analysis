@@ -15,76 +15,81 @@ from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from datetime import datetime
 
-# ── 三色系统 ─────────────────────────────────────────────────
-GREEN = "#3ddc84"   # 多头/支持/买入
-RED   = "#ff5252"   # 空头/警惕/不交易
-YELLOW= "#ffb74d"   # 等待/观望/中性
-GRAY  = "#7a8090"   # 辅助文字
-GRAY_LIGHT = "#a0a6b3"  # 主体文字
-GRAY_DARK  = "#4a5060"  # 次级辅助
-BG     = "#0a0a0f"
-BG_CARD = "#12141c"
-BORDER = "#1e2030"
+# ── 浅色主题（邮件友好）─────────────────────────────────────
+# 设计原则：白底黑字，三色用深饱和色，对比度全部≥7:1
+GREEN  = "#0d8050"   # 深绿 - 多头/支持/买入
+RED    = "#c43c3c"   # 深红 - 空头/警惕/不交易
+YELLOW = "#b87100"   # 深橙 - 等待/观望/中性
+TEXT_MAIN     = "#1a1a1a"  # 主文字（接近纯黑）
+TEXT_BODY     = "#3a3a3a"  # 正文文字
+TEXT_SUB      = "#666666"  # 辅助文字（标签、说明）
+TEXT_MUTED    = "#999999"  # 次级辅助
+BG            = "#ffffff"  # 主背景纯白
+BG_CARD       = "#f7f8fa"  # 卡片浅灰底
+BG_HIGHLIGHT  = "#fef8e7"  # 强调背景（淡黄）
+BORDER        = "#e0e3e8"  # 浅边框
+BORDER_STRONG = "#c8ccd4"  # 强边框
 
 STYLE = f"""
 <style>
 * {{ box-sizing: border-box; -webkit-text-size-adjust: 100%; }}
 body {{
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
   background: {BG};
-  color: {GRAY_LIGHT};
+  color: {TEXT_BODY};
   margin: 0; padding: 0;
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.6;
 }}
 .container {{
   max-width: 680px;
   margin: 0 auto;
   padding: 20px 16px;
+  background: {BG};
 }}
 
 /* ── 顶部 header ── */
 .header {{
   padding: 16px 0 20px 0;
-  border-bottom: 1px solid {BORDER};
+  border-bottom: 2px solid {BORDER_STRONG};
   margin-bottom: 24px;
 }}
 .header-title {{
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
-  color: #ffffff;
+  color: {TEXT_MAIN};
   margin-bottom: 4px;
 }}
 .header-sub {{
-  font-size: 11px;
-  color: {GRAY_DARK};
-  letter-spacing: 0.5px;
+  font-size: 12px;
+  color: {TEXT_SUB};
 }}
 
 /* ── 区块标题 ── */
 .section-title {{
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
-  color: {GRAY};
+  color: {TEXT_SUB};
   text-transform: uppercase;
   letter-spacing: 2px;
   margin: 32px 0 14px 0;
   padding-bottom: 8px;
-  border-bottom: 1px solid {BORDER};
+  border-bottom: 2px solid {BORDER_STRONG};
 }}
 
 /* ── 今日动作卡 ── */
 .action-card {{
-  background: {BG_CARD};
-  border: 1px solid {BORDER};
+  background: {BG_HIGHLIGHT};
+  border: 1px solid {BORDER_STRONG};
+  border-left: 4px solid {YELLOW};
   border-radius: 4px;
   padding: 16px;
   margin-bottom: 24px;
 }}
 .action-card-title {{
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
-  color: #ffffff;
+  color: {TEXT_MAIN};
   margin-bottom: 12px;
 }}
 .action-card-title .count {{
@@ -98,100 +103,102 @@ body {{
 }}
 .action-item:last-child {{ border-bottom: none; }}
 .action-ticker-line {{
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 700;
-  color: #ffffff;
+  color: {TEXT_MAIN};
   margin-bottom: 6px;
 }}
 .action-ticker-line .price {{
-  color: {GRAY};
-  font-weight: 400;
-  font-size: 13px;
+  color: {TEXT_SUB};
+  font-weight: 500;
+  font-size: 14px;
   margin-left: 8px;
 }}
 .action-change {{
-  font-size: 13px;
-  color: {GRAY_LIGHT};
+  font-size: 14px;
+  color: {TEXT_BODY};
   line-height: 1.7;
   margin: 3px 0;
 }}
-.action-change.priority-0 {{ color: {RED}; }}
+.action-change.priority-0 {{ color: {RED}; font-weight: 600; }}
 .action-no-action {{
-  font-size: 12px;
-  color: {GRAY_DARK};
+  font-size: 13px;
+  color: {TEXT_SUB};
   padding-top: 12px;
   margin-top: 4px;
   border-top: 1px solid {BORDER};
 }}
-.action-no-action .label {{ color: {GREEN}; font-weight: 600; }}
+.action-no-action .label {{ color: {GREEN}; font-weight: 700; }}
 
 /* ── 总览表 ── */
 .overview-wrap {{ margin-bottom: 24px; }}
 .overview-table {{
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 13px;
 }}
 .overview-table th {{
-  font-size: 10px;
-  font-weight: 600;
-  color: {GRAY_DARK};
+  font-size: 11px;
+  font-weight: 700;
+  color: {TEXT_SUB};
   text-transform: uppercase;
   letter-spacing: 1px;
   text-align: left;
-  padding: 8px 6px;
-  border-bottom: 1px solid {BORDER};
+  padding: 10px 6px;
+  border-bottom: 2px solid {BORDER_STRONG};
+  background: {BG_CARD};
 }}
 .overview-table td {{
-  padding: 10px 6px;
+  padding: 12px 6px;
   border-bottom: 1px solid {BORDER};
   vertical-align: middle;
 }}
-.ov-ticker {{ font-weight: 700; color: #ffffff; font-size: 13px; }}
-.ov-price  {{ color: #ffffff; font-weight: 600; }}
+.ov-ticker {{ font-weight: 700; color: {TEXT_MAIN}; font-size: 14px; }}
+.ov-price  {{ color: {TEXT_MAIN}; font-weight: 700; }}
 
 /* ── 标签 tag ── */
 .tag {{
   display: inline-block;
-  padding: 3px 8px;
-  font-size: 11px;
-  font-weight: 600;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
   border-radius: 3px;
   white-space: nowrap;
 }}
-.tag-bull {{ background: rgba(61,220,132,0.15); color: {GREEN}; }}
-.tag-bear {{ background: rgba(255,82,82,0.15);  color: {RED}; }}
-.tag-wait {{ background: rgba(255,183,77,0.15); color: {YELLOW}; }}
-.tag-hold {{ background: rgba(122,128,144,0.15); color: {GRAY_LIGHT}; }}
-.tag-na   {{ background: rgba(122,128,144,0.1);  color: {GRAY}; }}
+.tag-bull {{ background: #e6f4ed; color: {GREEN}; border: 1px solid #b3dcc7; }}
+.tag-bear {{ background: #fae5e5; color: {RED};   border: 1px solid #ebb3b3; }}
+.tag-wait {{ background: #fdf0d4; color: {YELLOW}; border: 1px solid #e8c98a; }}
+.tag-hold {{ background: #e8eaed; color: {TEXT_BODY}; border: 1px solid #c8ccd4; }}
+.tag-na   {{ background: #f0f1f3; color: {TEXT_MUTED}; border: 1px solid {BORDER}; }}
 
 /* 颜色 */
-.green {{ color: {GREEN} !important; }}
-.red {{ color: {RED} !important; }}
+.green  {{ color: {GREEN} !important; }}
+.red    {{ color: {RED} !important; }}
 .yellow {{ color: {YELLOW} !important; }}
-.gray {{ color: {GRAY} !important; }}
-.bold {{ font-weight: 700; }}
+.gray   {{ color: {TEXT_SUB} !important; }}
+.bold   {{ font-weight: 700; }}
 
 /* ── AI区块 ── */
 .ai-matrix {{
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 12px;
   margin-bottom: 32px;
 }}
 .ai-matrix th {{
-  font-size: 10px;
-  font-weight: 600;
-  color: {GRAY_DARK};
+  font-size: 11px;
+  font-weight: 700;
+  color: {TEXT_SUB};
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  padding: 8px 5px;
+  padding: 10px 5px;
   text-align: center;
-  border-bottom: 1px solid {BORDER};
+  background: {BG_CARD};
+  border-bottom: 2px solid {BORDER_STRONG};
 }}
 .ai-matrix th:first-child {{ text-align: left; }}
 .ai-matrix td {{
-  padding: 9px 5px;
+  padding: 10px 5px;
   border-bottom: 1px solid {BORDER};
   text-align: center;
 }}
@@ -200,60 +207,63 @@ body {{
 /* ── AI详细理由 ── */
 .ai-detail {{
   margin-bottom: 28px;
-  padding-bottom: 8px;
 }}
 .ai-detail-header {{
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
-  color: #ffffff;
-  padding: 6px 0 12px 0;
-  border-bottom: 1px solid {BORDER};
+  color: {TEXT_MAIN};
+  padding: 8px 0 12px 0;
+  border-bottom: 2px solid {BORDER_STRONG};
   margin-bottom: 14px;
 }}
 .ai-detail-header .price {{
-  color: {GRAY};
-  font-weight: 400;
-  font-size: 13px;
+  color: {TEXT_SUB};
+  font-weight: 500;
+  font-size: 14px;
   margin-left: 8px;
 }}
 .ai-model-block {{
   margin-bottom: 16px;
-  padding-left: 12px;
-  border-left: 2px solid {BORDER};
+  padding: 10px 12px;
+  background: {BG_CARD};
+  border-left: 3px solid {BORDER_STRONG};
+  border-radius: 2px;
 }}
 .ai-model-block.judge {{
-  border-left-color: {GRAY_DARK};
+  border-left-color: {YELLOW};
 }}
 .ai-model-name {{
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
-  color: {GRAY_DARK};
+  color: {TEXT_SUB};
   text-transform: uppercase;
   letter-spacing: 1px;
   margin-bottom: 4px;
 }}
 .ai-model-decision {{
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   margin-bottom: 6px;
+  color: {TEXT_MAIN};
 }}
 .ai-model-decision .conf {{
-  color: {GRAY};
-  font-size: 11px;
-  font-weight: 400;
-  margin-left: 6px;
+  color: {TEXT_SUB};
+  font-size: 12px;
+  font-weight: 500;
+  margin-left: 8px;
 }}
 .ai-model-body {{
-  font-size: 12px;
-  color: {GRAY_LIGHT};
+  font-size: 13px;
+  color: {TEXT_BODY};
   line-height: 1.7;
   margin-bottom: 6px;
 }}
 .ai-trigger {{
-  font-size: 12px;
+  font-size: 13px;
   color: {GREEN};
+  font-weight: 600;
   margin: 4px 0;
-  padding-left: 14px;
+  padding-left: 16px;
   position: relative;
 }}
 .ai-trigger::before {{
@@ -263,10 +273,11 @@ body {{
   color: {GREEN};
 }}
 .ai-risk {{
-  font-size: 12px;
+  font-size: 13px;
   color: {RED};
+  font-weight: 600;
   margin: 4px 0;
-  padding-left: 14px;
+  padding-left: 16px;
   position: relative;
 }}
 .ai-risk::before {{
@@ -275,23 +286,25 @@ body {{
   left: 0;
 }}
 .judge-meta {{
-  font-size: 11px;
-  color: {GRAY};
+  font-size: 12px;
+  color: {TEXT_BODY};
   margin: 4px 0;
 }}
 .judge-meta .label {{
   font-weight: 700;
-  color: {GRAY_LIGHT};
+  color: {TEXT_MAIN};
 }}
 .judge-tag {{
   display: inline-block;
-  padding: 1px 6px;
-  font-size: 9px;
-  border: 1px solid {GRAY_DARK};
-  color: {GRAY};
+  padding: 2px 7px;
+  font-size: 10px;
+  background: #ffffff;
+  border: 1px solid {BORDER_STRONG};
+  color: {TEXT_SUB};
   border-radius: 2px;
   margin-left: 6px;
   vertical-align: middle;
+  font-weight: 600;
 }}
 
 /* ── 逐股详情 ── */
@@ -301,32 +314,35 @@ body {{
 }}
 .stock-header {{
   padding: 12px 0;
-  border-bottom: 2px solid {BORDER};
+  border-bottom: 3px solid {TEXT_MAIN};
   margin-bottom: 16px;
 }}
 .stock-name {{
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 700;
-  color: #ffffff;
+  color: {TEXT_MAIN};
 }}
 .stock-price {{
-  font-size: 18px;
-  color: #ffffff;
-  font-weight: 600;
+  font-size: 20px;
+  color: {TEXT_MAIN};
+  font-weight: 700;
   margin-left: 12px;
 }}
 .stock-date {{
-  font-size: 11px;
-  color: {GRAY_DARK};
+  font-size: 12px;
+  color: {TEXT_SUB};
   margin-left: 8px;
 }}
 
 /* 一行结论 */
 .stock-summary {{
-  font-size: 13px;
-  color: {GRAY_LIGHT};
+  font-size: 14px;
+  color: {TEXT_BODY};
   margin-bottom: 16px;
-  line-height: 1.8;
+  line-height: 1.9;
+  padding: 10px 12px;
+  background: {BG_CARD};
+  border-radius: 3px;
 }}
 .stock-summary span {{ margin-right: 12px; }}
 
@@ -335,70 +351,82 @@ body {{
 .chart-img {{
   width: 100%;
   display: block;
-  border: 1px solid {BORDER};
-  border-radius: 2px;
+  border: 1px solid {BORDER_STRONG};
+  border-radius: 3px;
 }}
 
 /* 数据组 */
 .data-group {{
-  margin-bottom: 14px;
+  margin-bottom: 18px;
 }}
 .data-group-title {{
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
-  color: {GRAY_DARK};
+  color: {TEXT_MAIN};
   text-transform: uppercase;
   letter-spacing: 1.5px;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid {BORDER};
 }}
 .data-row {{
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  padding: 5px 0;
+  padding: 8px 0;
   border-bottom: 1px solid {BORDER};
-  font-size: 13px;
+  font-size: 14px;
 }}
 .data-row:last-child {{ border-bottom: none; }}
 .data-row .key {{
-  color: {GRAY};
-  font-size: 12px;
+  color: {TEXT_SUB};
+  font-size: 13px;
 }}
 .data-row .val {{
-  color: {GRAY_LIGHT};
+  color: {TEXT_MAIN};
   font-weight: 500;
   text-align: right;
+  font-size: 14px;
 }}
-.data-row .val.bold {{ font-weight: 700; color: #ffffff; }}
+.data-row .val.bold {{ font-weight: 700; }}
 
 /* 事件提示 */
 .event-note {{
-  font-size: 10px;
-  color: {GRAY_DARK};
-  margin-top: 6px;
+  font-size: 11px;
+  color: {TEXT_SUB};
+  margin-top: 8px;
   font-style: italic;
+  padding: 6px 8px;
+  background: {BG_CARD};
+  border-radius: 2px;
 }}
 
 /* footer */
 .footer {{
-  font-size: 10px;
-  color: {GRAY_DARK};
+  font-size: 11px;
+  color: {TEXT_SUB};
   text-align: center;
   padding: 24px 0 8px 0;
-  border-top: 1px solid {BORDER};
+  border-top: 1px solid {BORDER_STRONG};
   margin-top: 32px;
   line-height: 1.7;
 }}
 
 /* 响应式 - 移动端进一步优化 */
 @media (max-width: 600px) {{
+  body {{ font-size: 14px; }}
   .container {{ padding: 16px 12px; }}
-  .stock-name {{ font-size: 20px; }}
-  .stock-price {{ font-size: 16px; }}
-  .overview-table {{ font-size: 11px; }}
-  .overview-table th, .overview-table td {{ padding: 6px 4px; }}
-  .ai-matrix {{ font-size: 10px; }}
-  .ai-matrix th, .ai-matrix td {{ padding: 6px 3px; }}
+  .stock-name {{ font-size: 22px; }}
+  .stock-price {{ font-size: 18px; }}
+  .overview-table {{ font-size: 12px; }}
+  .overview-table th, .overview-table td {{ padding: 8px 4px; }}
+  .ai-matrix {{ font-size: 11px; }}
+  .ai-matrix th, .ai-matrix td {{ padding: 8px 3px; }}
+}}
+
+@media (prefers-color-scheme: dark) {{
+  /* 强制使用浅色主题，避免深色模式渲染异常 */
+  body, .container {{ background: {BG} !important; color: {TEXT_BODY} !important; }}
 }}
 </style>
 """
@@ -479,7 +507,7 @@ def build_action_card(today_snapshot, changes, no_action_tickers, ai_results=Non
     if no_action_tickers:
         no_action_html = f'''<div class="action-no-action">
           <span class="label">✓ 无需操作（{len(no_action_tickers)}只）</span>
-          <span style="color:{GRAY_DARK};margin-left:8px;">{' · '.join(no_action_tickers)}</span>
+          <span style="color:{TEXT_SUB};margin-left:8px;">{' · '.join(no_action_tickers)}</span>
         </div>'''
 
     if not items_html and not no_action_html:
@@ -491,7 +519,7 @@ def build_action_card(today_snapshot, changes, no_action_tickers, ai_results=Non
     if not changes:
         title = "✓ 今日无明显变化"
         count = ""
-        items_html = f'<div style="font-size:13px;color:{GRAY};padding:8px 0;">所有标的状态稳定，无需特别关注</div>'
+        items_html = f'<div style="font-size:13px;color:{TEXT_SUB};padding:8px 0;">所有标的状态稳定，无需特别关注</div>'
 
     return f'''<div class="action-card">
       <div class="action-card-title">{title}{count}</div>
@@ -772,7 +800,7 @@ def build_cost_html(cost):
     total = cost.get("total_cost", 0)
     per   = cost.get("per_model", {})
     parts = " · ".join([f"{k.split('/')[-1]} ${v['cost']}" for k, v in per.items()])
-    return f'<div style="font-size:10px;color:{GRAY_DARK};text-align:center;padding:12px;">API 费用：{parts} · 合计 ${total}</div>'
+    return f'<div style="font-size:10px;color:{TEXT_SUB};text-align:center;padding:12px;">API 费用：{parts} · 合计 ${total}</div>'
 
 
 # ── 完整HTML ──────────────────────────────────────────────────
