@@ -1,5 +1,5 @@
 """
-主入口 v2：批量分析 + AI综合解读 + 生成图表 + 发送邮件
+主入口 v3.0：分析 + AI + 历史对比 + 邮件
 """
 
 import os
@@ -8,6 +8,10 @@ from analyze import analyze_all, STOCK_POOL
 from chart import generate_chart
 from email_sender import send_email
 from ai_analysis import run_ai_analysis
+from history import (
+    load_history, update_history, extract_snapshot,
+    get_yesterday_snapshot, detect_changes, build_action_summary
+)
 
 CHART_DIR = "/tmp/charts"
 
@@ -22,23 +26,36 @@ def main():
 
     gmail_user     = os.environ.get("GMAIL_USER", "")
     gmail_password = os.environ.get("GMAIL_APP_PASSWORD", "")
-
     if not gmail_user or not gmail_password:
-        print("❌ 未找到邮件配置")
+        print("❌ 邮件配置缺失")
         sys.exit(1)
 
-    print(f"\n{'='*60}")
-    print(f"  股票技术分析日报 v2")
-    print(f"  标的：{', '.join(tickers)}")
-    print(f"{'='*60}")
+    print(f"\n{'='*60}\n  股票技术分析 v3.0\n  标的：{', '.join(tickers)}\n{'='*60}")
 
-    # 1. 技术分析（12项框架）
+    # 1. 技术分析
     results = analyze_all(tickers)
 
-    # 2. AI综合分析（v2新增）
+    # 2. AI分析
     ai_results, cost_summary = run_ai_analysis(results)
 
-    # 3. 生成图表
+    # 3. 历史对比
+    print(f"\n{'='*60}\n  历史对比 + 变化检测\n{'='*60}")
+    history = load_history()
+    yesterday_date, yesterday_snapshot = get_yesterday_snapshot(history)
+    today_snapshot = extract_snapshot(results, ai_results)
+    changes = detect_changes(today_snapshot, yesterday_snapshot)
+    need_attention, no_action = build_action_summary(today_snapshot, changes)
+
+    print(f"  最近一次档案：{yesterday_date or '无'}")
+    print(f"  今日变化标的：{list(changes.keys()) if changes else '无'}")
+    print(f"  需要关注：{need_attention}")
+    print(f"  无需操作：{no_action}")
+
+    # 更新历史档案
+    update_history(today_snapshot)
+    print(f"  ✅ 历史档案已更新")
+
+    # 4. 生成图表
     chart_paths = {}
     for r in results:
         if "error" not in r:
@@ -48,7 +65,7 @@ def main():
             except Exception as e:
                 print(f"  ⚠️ {r['ticker']} 图表生成失败: {e}")
 
-    # 4. 发送邮件
+    # 5. 发送邮件
     send_email(
         results=results,
         chart_paths=chart_paths,
@@ -57,6 +74,9 @@ def main():
         to_addr=gmail_user,
         ai_results=ai_results,
         cost_summary=cost_summary,
+        today_snapshot=today_snapshot,
+        changes=changes,
+        no_action_tickers=no_action,
     )
 
 

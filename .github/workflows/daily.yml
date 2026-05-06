@@ -2,14 +2,16 @@ name: 股票技术分析日报
 
 on:
   schedule:
-    # 北京时间 20:00 = UTC 12:00
-    - cron: '0 12 * * 1-5'
+    - cron: '0 12 * * 1-5'   # 北京时间20:00 = UTC 12:00
   workflow_dispatch:
     inputs:
       extra_tickers:
-        description: '额外分析的股票代码（空格分隔，如：AAPL NVDA）'
+        description: '额外分析的股票代码（空格分隔）'
         required: false
         default: ''
+
+permissions:
+  contents: write   # 允许workflow提交history.json
 
 jobs:
   analyze-and-send:
@@ -41,6 +43,17 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           EXTRA_TICKERS: ${{ github.event.inputs.extra_tickers }}
         run: python main.py
+
+      - name: 提交历史档案
+        if: success()
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ -f history.json ]; then
+            git add history.json
+            git diff --staged --quiet || git commit -m "chore: 更新历史档案 $(date -u +%Y-%m-%d)"
+            git push
+          fi
 
       - name: 上传图表（调试用）
         if: always()

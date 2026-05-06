@@ -1,6 +1,12 @@
 """
-邮件发送模块 v2.2
-彭博风格重设计：数据密度高，层级清晰，易读优先
+邮件发送模块 v3.0
+设计原则：
+- 单列布局，移动端友好
+- 三色系统：绿(好)/红(坏)/黄(等待)/灰(辅助)
+- 字号分级：18px结论 / 14px数据 / 12px说明 / 10px附注
+- 大间距分隔，留白为王
+- 字重对比 > 颜色对比
+- 顶部"今日动作卡"指引行动
 """
 
 import smtplib, os
@@ -9,325 +15,492 @@ from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from datetime import datetime
 
-STYLE = """
+# ── 三色系统 ─────────────────────────────────────────────────
+GREEN = "#3ddc84"   # 多头/支持/买入
+RED   = "#ff5252"   # 空头/警惕/不交易
+YELLOW= "#ffb74d"   # 等待/观望/中性
+GRAY  = "#7a8090"   # 辅助文字
+GRAY_LIGHT = "#a0a6b3"  # 主体文字
+GRAY_DARK  = "#4a5060"  # 次级辅助
+BG     = "#0a0a0f"
+BG_CARD = "#12141c"
+BORDER = "#1e2030"
+
+STYLE = f"""
 <style>
-* { box-sizing: border-box; }
-body {
-  font-family: 'SF Mono', 'Fira Code', 'Segoe UI', Arial, sans-serif;
-  background: #0a0a0f;
-  color: #c8ccd4;
-  margin: 0; padding: 16px;
-  font-size: 13px;
-  line-height: 1.5;
-}
-.container { max-width: 900px; margin: 0 auto; }
+* {{ box-sizing: border-box; -webkit-text-size-adjust: 100%; }}
+body {{
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+  background: {BG};
+  color: {GRAY_LIGHT};
+  margin: 0; padding: 0;
+  font-size: 14px;
+  line-height: 1.6;
+}}
+.container {{
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 20px 16px;
+}}
 
 /* ── 顶部 header ── */
-.header {
-  border-left: 3px solid #4a9eff;
-  padding: 10px 16px;
-  margin-bottom: 20px;
-  background: #0f0f1a;
-}
-.header-title {
-  font-size: 16px; font-weight: 700;
-  color: #e0e4ef; letter-spacing: 1px;
-  text-transform: uppercase;
-}
-.header-sub { color: #5a6070; font-size: 11px; margin-top: 2px; }
+.header {{
+  padding: 16px 0 20px 0;
+  border-bottom: 1px solid {BORDER};
+  margin-bottom: 24px;
+}}
+.header-title {{
+  font-size: 20px;
+  font-weight: 700;
+  color: #ffffff;
+  margin-bottom: 4px;
+}}
+.header-sub {{
+  font-size: 11px;
+  color: {GRAY_DARK};
+  letter-spacing: 0.5px;
+}}
 
 /* ── 区块标题 ── */
-.section-header {
-  font-size: 10px; font-weight: 700;
-  color: #4a9eff;
+.section-title {{
+  font-size: 11px;
+  font-weight: 700;
+  color: {GRAY};
   text-transform: uppercase;
   letter-spacing: 2px;
-  padding: 6px 0 4px 0;
-  border-bottom: 1px solid #1e2030;
-  margin-bottom: 12px;
-}
+  margin: 32px 0 14px 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid {BORDER};
+}}
 
-/* ── 总览表格 ── */
-.overview-wrap { margin-bottom: 20px; }
-.overview-table {
-  width: 100%; border-collapse: collapse;
+/* ── 今日动作卡 ── */
+.action-card {{
+  background: {BG_CARD};
+  border: 1px solid {BORDER};
+  border-radius: 4px;
+  padding: 16px;
+  margin-bottom: 24px;
+}}
+.action-card-title {{
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
+  margin-bottom: 12px;
+}}
+.action-card-title .count {{
+  color: {YELLOW};
+  font-weight: 700;
+  margin-left: 6px;
+}}
+.action-item {{
+  padding: 12px 0;
+  border-bottom: 1px solid {BORDER};
+}}
+.action-item:last-child {{ border-bottom: none; }}
+.action-ticker-line {{
+  font-size: 16px;
+  font-weight: 700;
+  color: #ffffff;
+  margin-bottom: 6px;
+}}
+.action-ticker-line .price {{
+  color: {GRAY};
+  font-weight: 400;
+  font-size: 13px;
+  margin-left: 8px;
+}}
+.action-change {{
+  font-size: 13px;
+  color: {GRAY_LIGHT};
+  line-height: 1.7;
+  margin: 3px 0;
+}}
+.action-change.priority-0 {{ color: {RED}; }}
+.action-no-action {{
   font-size: 12px;
-}
-.overview-table th {
-  color: #4a6080; font-weight: 600;
-  text-transform: uppercase; font-size: 10px;
+  color: {GRAY_DARK};
+  padding-top: 12px;
+  margin-top: 4px;
+  border-top: 1px solid {BORDER};
+}}
+.action-no-action .label {{ color: {GREEN}; font-weight: 600; }}
+
+/* ── 总览表 ── */
+.overview-wrap {{ margin-bottom: 24px; }}
+.overview-table {{
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}}
+.overview-table th {{
+  font-size: 10px;
+  font-weight: 600;
+  color: {GRAY_DARK};
+  text-transform: uppercase;
   letter-spacing: 1px;
-  padding: 6px 10px;
-  border-bottom: 1px solid #1e2030;
   text-align: left;
-  background: #0a0a0f;
-}
-.overview-table td {
-  padding: 7px 10px;
-  border-bottom: 1px solid #12121a;
+  padding: 8px 6px;
+  border-bottom: 1px solid {BORDER};
+}}
+.overview-table td {{
+  padding: 10px 6px;
+  border-bottom: 1px solid {BORDER};
   vertical-align: middle;
-}
-.overview-table tr:hover td { background: #0f0f1a; }
-.ov-ticker { font-weight: 700; color: #e0e4ef; font-size: 13px; }
-.ov-price  { color: #4a9eff; font-weight: 600; }
-.tag {
+}}
+.ov-ticker {{ font-weight: 700; color: #ffffff; font-size: 13px; }}
+.ov-price  {{ color: #ffffff; font-weight: 600; }}
+
+/* ── 标签 tag ── */
+.tag {{
   display: inline-block;
-  padding: 2px 7px;
-  border-radius: 2px;
-  font-size: 10px; font-weight: 700;
-  letter-spacing: 0.5px;
-}
-.tag-buy    { background: #0d2a1a; color: #3ddc84; border: 1px solid #1a4a2a; }
-.tag-trial  { background: #0d2a1a; color: #69f0ae; border: 1px solid #1a4a2a; }
-.tag-hold   { background: #0d1a3a; color: #5b9eff; border: 1px solid #1a2a5a; }
-.tag-wait   { background: #2a1a06; color: #ffb74d; border: 1px solid #4a3010; }
-.tag-no     { background: #2a0d0d; color: #ff5252; border: 1px solid #4a1a1a; }
-.tag-na     { background: #1a1a2a; color: #5a6070; border: 1px solid #2a2a3a; }
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 3px;
+  white-space: nowrap;
+}}
+.tag-bull {{ background: rgba(61,220,132,0.15); color: {GREEN}; }}
+.tag-bear {{ background: rgba(255,82,82,0.15);  color: {RED}; }}
+.tag-wait {{ background: rgba(255,183,77,0.15); color: {YELLOW}; }}
+.tag-hold {{ background: rgba(122,128,144,0.15); color: {GRAY_LIGHT}; }}
+.tag-na   {{ background: rgba(122,128,144,0.1);  color: {GRAY}; }}
 
 /* 颜色 */
-.bull { color: #3ddc84; }
-.bear { color: #ff5252; }
-.warn { color: #ffb74d; }
-.muted { color: #5a6070; }
-.blue { color: #4a9eff; }
-
-/* ── 执行摘要 ── */
-.exec-summary {
-  background: #0f0f1a;
-  border: 1px solid #1e2030;
-  border-radius: 2px;
-  padding: 10px 16px;
-  margin-bottom: 20px;
-  font-size: 12px;
-  color: #8a90a0;
-}
-.exec-summary-items {
-  display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;
-}
+.green {{ color: {GREEN} !important; }}
+.red {{ color: {RED} !important; }}
+.yellow {{ color: {YELLOW} !important; }}
+.gray {{ color: {GRAY} !important; }}
+.bold {{ font-weight: 700; }}
 
 /* ── AI区块 ── */
-.ai-wrap { margin-bottom: 24px; }
-
-/* AI横向对比表 */
-.ai-matrix-table {
-  width: 100%; border-collapse: collapse;
-  font-size: 11px; margin-bottom: 20px;
-}
-.ai-matrix-table th {
-  color: #4a6080; font-weight: 600;
-  text-transform: uppercase; font-size: 10px;
+.ai-matrix {{
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  margin-bottom: 32px;
+}}
+.ai-matrix th {{
+  font-size: 10px;
+  font-weight: 600;
+  color: {GRAY_DARK};
+  text-transform: uppercase;
   letter-spacing: 0.5px;
-  padding: 5px 8px;
-  border-bottom: 1px solid #1e2030;
+  padding: 8px 5px;
   text-align: center;
-  background: #0a0a0f;
-}
-.ai-matrix-table th:first-child { text-align: left; }
-.ai-matrix-table td {
-  padding: 6px 8px;
-  border-bottom: 1px solid #12121a;
+  border-bottom: 1px solid {BORDER};
+}}
+.ai-matrix th:first-child {{ text-align: left; }}
+.ai-matrix td {{
+  padding: 9px 5px;
+  border-bottom: 1px solid {BORDER};
   text-align: center;
-  vertical-align: middle;
-}
-.ai-matrix-table td:first-child { text-align: left; }
-.ai-matrix-table tr:hover td { background: #0f0f1a; }
-.matrix-ticker { font-weight: 700; color: #e0e4ef; }
-.matrix-price  { color: #5a6070; font-size: 10px; }
-.conf-badge {
-  font-size: 9px; color: #5a6070;
-  display: block; margin-top: 1px;
-}
+}}
+.ai-matrix td:first-child {{ text-align: left; }}
 
-/* AI详细理由区块 */
-.ai-detail-block { margin-bottom: 20px; }
-.ai-ticker-header {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 0;
-  border-bottom: 1px solid #1e2030;
-  margin-bottom: 12px;
-}
-.ai-ticker-name { font-size: 14px; font-weight: 700; color: #e0e4ef; }
-.ai-ticker-price { font-size: 12px; color: #4a9eff; }
-
-.ai-models-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  margin-bottom: 12px;
-}
-.ai-model-col { }
-.ai-model-label {
-  font-size: 9px; font-weight: 700;
-  color: #4a6080; text-transform: uppercase;
-  letter-spacing: 1px; margin-bottom: 4px;
-}
-.ai-model-decision {
-  font-size: 13px; font-weight: 700;
+/* ── AI详细理由 ── */
+.ai-detail {{
+  margin-bottom: 28px;
+  padding-bottom: 8px;
+}}
+.ai-detail-header {{
+  font-size: 16px;
+  font-weight: 700;
+  color: #ffffff;
+  padding: 6px 0 12px 0;
+  border-bottom: 1px solid {BORDER};
+  margin-bottom: 14px;
+}}
+.ai-detail-header .price {{
+  color: {GRAY};
+  font-weight: 400;
+  font-size: 13px;
+  margin-left: 8px;
+}}
+.ai-model-block {{
+  margin-bottom: 16px;
+  padding-left: 12px;
+  border-left: 2px solid {BORDER};
+}}
+.ai-model-block.judge {{
+  border-left-color: {GRAY_DARK};
+}}
+.ai-model-name {{
+  font-size: 10px;
+  font-weight: 700;
+  color: {GRAY_DARK};
+  text-transform: uppercase;
+  letter-spacing: 1px;
   margin-bottom: 4px;
-}
-.ai-model-body {
-  font-size: 11px; color: #8a90a0;
-  line-height: 1.6; margin-bottom: 6px;
-}
-.ai-model-trigger {
-  font-size: 11px; color: #3daa6a;
-  padding-left: 10px; position: relative;
-  margin-bottom: 3px;
-}
-.ai-model-trigger::before { content: "📍 "; }
-.ai-model-risk {
-  font-size: 11px; color: #cc6644;
-  padding-left: 10px; position: relative;
-}
-.ai-model-risk::before { content: "⚠️ "; }
-
-/* 双元裁判 */
-.judge-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  padding-top: 10px;
-  border-top: 1px solid #1e2030;
-}
-.judge-col { }
-.judge-label {
-  font-size: 9px; font-weight: 700;
-  color: #4a6080; text-transform: uppercase;
-  letter-spacing: 1px; margin-bottom: 4px;
-}
-.judge-decision {
-  font-size: 13px; font-weight: 700; margin-bottom: 4px;
-}
-.judge-agree {
+}}
+.ai-model-decision {{
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}}
+.ai-model-decision .conf {{
+  color: {GRAY};
+  font-size: 11px;
+  font-weight: 400;
+  margin-left: 6px;
+}}
+.ai-model-body {{
+  font-size: 12px;
+  color: {GRAY_LIGHT};
+  line-height: 1.7;
+  margin-bottom: 6px;
+}}
+.ai-trigger {{
+  font-size: 12px;
+  color: {GREEN};
+  margin: 4px 0;
+  padding-left: 14px;
+  position: relative;
+}}
+.ai-trigger::before {{
+  content: "▸";
+  position: absolute;
+  left: 0;
+  color: {GREEN};
+}}
+.ai-risk {{
+  font-size: 12px;
+  color: {RED};
+  margin: 4px 0;
+  padding-left: 14px;
+  position: relative;
+}}
+.ai-risk::before {{
+  content: "⚠";
+  position: absolute;
+  left: 0;
+}}
+.judge-meta {{
+  font-size: 11px;
+  color: {GRAY};
+  margin: 4px 0;
+}}
+.judge-meta .label {{
+  font-weight: 700;
+  color: {GRAY_LIGHT};
+}}
+.judge-tag {{
   display: inline-block;
-  font-size: 9px; color: #5a7090;
-  border: 1px solid #2a3a4a;
-  padding: 1px 5px; border-radius: 2px;
-  margin-left: 6px; vertical-align: middle;
-}
-.judge-consensus { font-size: 11px; color: #5a9070; margin-bottom: 3px; }
-.judge-divergence { font-size: 11px; color: #907050; margin-bottom: 4px; }
-.judge-body { font-size: 11px; color: #8a90a0; line-height: 1.6; margin-bottom: 4px; }
-.judge-trigger { font-size: 11px; color: #3daa6a; }
-.judge-trigger::before { content: "📍 "; }
+  padding: 1px 6px;
+  font-size: 9px;
+  border: 1px solid {GRAY_DARK};
+  color: {GRAY};
+  border-radius: 2px;
+  margin-left: 6px;
+  vertical-align: middle;
+}}
 
 /* ── 逐股详情 ── */
-.stock-wrap { margin-bottom: 28px; }
-.stock-header {
-  display: flex; align-items: baseline;
-  gap: 12px; padding: 8px 0;
-  border-bottom: 2px solid #1e2030;
-  margin-bottom: 12px;
-}
-.stock-name { font-size: 18px; font-weight: 700; color: #e0e4ef; }
-.stock-price { font-size: 16px; color: #4a9eff; }
-.stock-date  { font-size: 11px; color: #5a6070; }
+.stock-block {{
+  margin-bottom: 40px;
+  padding-bottom: 16px;
+}}
+.stock-header {{
+  padding: 12px 0;
+  border-bottom: 2px solid {BORDER};
+  margin-bottom: 16px;
+}}
+.stock-name {{
+  font-size: 22px;
+  font-weight: 700;
+  color: #ffffff;
+}}
+.stock-price {{
+  font-size: 18px;
+  color: #ffffff;
+  font-weight: 600;
+  margin-left: 12px;
+}}
+.stock-date {{
+  font-size: 11px;
+  color: {GRAY_DARK};
+  margin-left: 8px;
+}}
 
-/* 一行结论摘要 */
-.stock-summary-line {
-  font-size: 11px; color: #7a8090;
-  margin-bottom: 12px;
-  padding: 6px 10px;
-  background: #0f0f1a;
-  border-left: 2px solid #2a3a5a;
-}
-.stock-summary-line span { margin-right: 8px; }
+/* 一行结论 */
+.stock-summary {{
+  font-size: 13px;
+  color: {GRAY_LIGHT};
+  margin-bottom: 16px;
+  line-height: 1.8;
+}}
+.stock-summary span {{ margin-right: 12px; }}
 
 /* 图表 */
-.chart-wrap { margin-bottom: 14px; }
-.chart-img { width: 100%; display: block; border: 1px solid #1e2030; }
+.chart-wrap {{ margin-bottom: 16px; }}
+.chart-img {{
+  width: 100%;
+  display: block;
+  border: 1px solid {BORDER};
+  border-radius: 2px;
+}}
 
-/* 12项紧凑数据表 */
-.data-section { margin-bottom: 10px; }
-.data-section-title {
-  font-size: 9px; font-weight: 700;
-  color: #4a6070; text-transform: uppercase;
+/* 数据组 */
+.data-group {{
+  margin-bottom: 14px;
+}}
+.data-group-title {{
+  font-size: 10px;
+  font-weight: 700;
+  color: {GRAY_DARK};
+  text-transform: uppercase;
   letter-spacing: 1.5px;
-  margin-bottom: 4px;
-}
-.data-table {
-  width: 100%; border-collapse: collapse;
-  font-size: 11px;
-}
-.data-table td {
-  padding: 3px 8px 3px 0;
-  vertical-align: top;
-  border: none;
-  width: 25%;
-}
-.data-key { color: #4a6070; white-space: nowrap; }
-.data-val { color: #c0c4d0; font-weight: 500; }
-.data-conclusion {
-  font-size: 11px; font-weight: 600;
-  margin-top: 3px; padding: 3px 8px;
-  border-left: 2px solid #2a3a4a;
-  color: #8a90a0;
-}
+  margin-bottom: 6px;
+}}
+.data-row {{
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 5px 0;
+  border-bottom: 1px solid {BORDER};
+  font-size: 13px;
+}}
+.data-row:last-child {{ border-bottom: none; }}
+.data-row .key {{
+  color: {GRAY};
+  font-size: 12px;
+}}
+.data-row .val {{
+  color: {GRAY_LIGHT};
+  font-weight: 500;
+  text-align: right;
+}}
+.data-row .val.bold {{ font-weight: 700; color: #ffffff; }}
 
-/* 分隔线 */
-.divider {
-  border: none; border-top: 1px solid #1e2030;
-  margin: 16px 0;
-}
+/* 事件提示 */
+.event-note {{
+  font-size: 10px;
+  color: {GRAY_DARK};
+  margin-top: 6px;
+  font-style: italic;
+}}
 
 /* footer */
-.footer {
-  font-size: 10px; color: #3a4050;
-  text-align: center; padding: 16px 0;
-  border-top: 1px solid #1a1a2a;
-  margin-top: 20px;
-}
+.footer {{
+  font-size: 10px;
+  color: {GRAY_DARK};
+  text-align: center;
+  padding: 24px 0 8px 0;
+  border-top: 1px solid {BORDER};
+  margin-top: 32px;
+  line-height: 1.7;
+}}
+
+/* 响应式 - 移动端进一步优化 */
+@media (max-width: 600px) {{
+  .container {{ padding: 16px 12px; }}
+  .stock-name {{ font-size: 20px; }}
+  .stock-price {{ font-size: 16px; }}
+  .overview-table {{ font-size: 11px; }}
+  .overview-table th, .overview-table td {{ padding: 6px 4px; }}
+  .ai-matrix {{ font-size: 10px; }}
+  .ai-matrix th, .ai-matrix td {{ padding: 6px 3px; }}
+}}
 </style>
 """
 
 
 # ── 工具函数 ─────────────────────────────────────────────────
 
-def tc(text):
-    if any(k in text for k in ["多头","支持","确认","放量","强","突破"]): return "bull"
-    if any(k in text for k in ["空头","警惕","破坏","弱","假突破","不支持"]): return "bear"
-    if any(k in text for k in ["观望","等待","不适合","存疑","冲突"]): return "warn"
-    return "muted"
-
-
-def dc(d):
-    if not d or d == "N/A": return "muted"
-    if "买入" in d: return "bull"
-    if "试多" in d: return "bull"
-    if "持有" in d: return "blue"
-    if "不交易" in d: return "bear"
-    return "warn"
+def color_class(text, context="trend"):
+    """三色系统：根据语义返回颜色class"""
+    if not text: return "gray"
+    if any(k in text for k in ["多头","支持","确认","放量","买入","合格","上升","试多","建议"]):
+        return "green"
+    if any(k in text for k in ["空头","警惕","破坏","弱","假突破","不支持","不交易","不合格","下降"]):
+        return "red"
+    if any(k in text for k in ["观望","等待","暂不","存疑","冲突","调整","不足","需"]):
+        return "yellow"
+    return "gray"
 
 
 def make_tag(decision):
     if not decision or decision == "N/A":
         return '<span class="tag tag-na">—</span>'
-    if "买入" in decision:   return f'<span class="tag tag-buy">{decision}</span>'
-    if "试多" in decision:   return f'<span class="tag tag-trial">{decision}</span>'
-    if "持有" in decision:   return f'<span class="tag tag-hold">{decision}</span>'
-    if "等待" in decision:   return f'<span class="tag tag-wait">{decision}</span>'
-    if "不交易" in decision: return f'<span class="tag tag-no">{decision}</span>'
+    if "买入" in decision or "试多" in decision:
+        return f'<span class="tag tag-bull">{decision}</span>'
+    if "持有" in decision:
+        return f'<span class="tag tag-hold">{decision}</span>'
+    if "等待" in decision:
+        return f'<span class="tag tag-wait">{decision}</span>'
+    if "不交易" in decision:
+        return f'<span class="tag tag-bear">{decision}</span>'
     return f'<span class="tag tag-na">{decision}</span>'
 
 
-def get_ai_decisions(ai_data):
-    """提取五个决策"""
+def get_decisions(ai_data):
     if not ai_data:
         return {k: "" for k in ["claude","gpt","deepseek","opus_judge","gpt_judge"]}
-    def _d(m):
-        r = ai_data.get(m, {})
-        if not r or r.get("error"): return ""
-        return r.get("decision", r.get("final_decision", ""))
+    def _d(m, key="decision"):
+        r = ai_data.get(m, {}) or {}
+        if r.get("error"): return ""
+        return r.get(key, "")
     return {
         "claude":     _d("claude"),
         "gpt":        _d("gpt"),
         "deepseek":   _d("deepseek"),
-        "opus_judge": ai_data.get("opus_judge",{}).get("final_decision","") if ai_data.get("opus_judge") and not ai_data.get("opus_judge",{}).get("error") else "",
-        "gpt_judge":  ai_data.get("gpt_judge",{}).get("final_decision","")  if ai_data.get("gpt_judge")  and not ai_data.get("gpt_judge",{}).get("error")  else "",
+        "opus_judge": _d("opus_judge", "final_decision"),
+        "gpt_judge":  _d("gpt_judge",  "final_decision"),
     }
 
 
-# ── 各区块构建 ────────────────────────────────────────────────
+# ── 今日动作卡 ────────────────────────────────────────────────
+
+def build_action_card(today_snapshot, changes, no_action_tickers, ai_results=None):
+    """构建顶部"今日动作"卡片"""
+
+    # 没有变化的特殊情况
+    if not changes and not today_snapshot:
+        return ""
+
+    items_html = ""
+    if changes:
+        for ticker, change_list in changes.items():
+            snap = today_snapshot.get(ticker, {})
+            ai   = (ai_results or {}).get(ticker, {})
+            d    = get_decisions(ai)
+            decision = d["opus_judge"] or d["gpt_judge"] or "—"
+
+            change_lines = "".join([
+                f'<div class="action-change priority-{c["priority"]}">{c["msg"]}</div>'
+                for c in change_list[:3]  # 最多显示3条
+            ])
+
+            items_html += f'''<div class="action-item">
+              <div class="action-ticker-line">{ticker} <span class="price">${snap.get("price","?")}</span> {make_tag(decision)}</div>
+              {change_lines}
+            </div>'''
+
+    no_action_html = ""
+    if no_action_tickers:
+        no_action_html = f'''<div class="action-no-action">
+          <span class="label">✓ 无需操作（{len(no_action_tickers)}只）</span>
+          <span style="color:{GRAY_DARK};margin-left:8px;">{' · '.join(no_action_tickers)}</span>
+        </div>'''
+
+    if not items_html and not no_action_html:
+        return ""
+
+    title = f"📍 今日重点关注"
+    count = f'<span class="count">{len(changes)}/{len(today_snapshot)}</span>' if today_snapshot else ""
+
+    if not changes:
+        title = "✓ 今日无明显变化"
+        count = ""
+        items_html = f'<div style="font-size:13px;color:{GRAY};padding:8px 0;">所有标的状态稳定，无需特别关注</div>'
+
+    return f'''<div class="action-card">
+      <div class="action-card-title">{title}{count}</div>
+      {items_html}
+      {no_action_html}
+    </div>'''
+
+
+# ── 总览表 ────────────────────────────────────────────────────
 
 def build_overview(results, ai_results=None):
     rows = ""
@@ -339,51 +512,33 @@ def build_overview(results, ai_results=None):
         r3     = r["3_mid_trend"]
         r11    = r["11_risk"]
         ai     = (ai_results or {}).get(ticker, {})
-        d      = get_ai_decisions(ai)
+        d      = get_decisions(ai)
         fd     = d["opus_judge"] or d["gpt_judge"] or ""
 
         rows += f"""<tr>
           <td><span class="ov-ticker">{ticker}</span></td>
           <td class="ov-price">${r['price']}</td>
-          <td class="{tc(r2['conclusion'])}">{r2['conclusion']}</td>
-          <td class="{tc(r3['conclusion'])}">{r3['conclusion']}</td>
-          <td class="bear">${lv['resistance']}</td>
-          <td class="bull">${lv['support']}</td>
-          <td class="warn">${lv['invalidation']}</td>
-          <td class="{'bull' if r11['rr_pass'] else 'bear'}" style="font-size:10px;">{r11['conclusion'][:14]}</td>
+          <td class="{color_class(r2['conclusion'])}">{r2['conclusion'][:6]}</td>
+          <td class="red">${lv['resistance']}</td>
+          <td class="green">${lv['support']}</td>
           <td>{make_tag(fd)}</td>
         </tr>"""
 
     return f"""<div class="overview-wrap">
-      <div class="section-header">市场总览</div>
+      <div class="section-title">市场总览</div>
       <table class="overview-table">
         <thead><tr>
-          <th>标的</th><th>现价</th><th>长期</th><th>中期</th>
-          <th>阻力</th><th>支撑</th><th>失效位</th><th>赔率</th><th>AI建议</th>
+          <th>标的</th><th>现价</th><th>趋势</th>
+          <th>阻力</th><th>支撑</th><th>AI建议</th>
         </tr></thead>
         <tbody>{rows}</tbody>
       </table>
     </div>"""
 
 
-def build_exec_summary(results, ai_results=None):
-    items = []
-    for r in results:
-        if "error" in r: continue
-        ticker = r["ticker"]
-        ai     = (ai_results or {}).get(ticker, {})
-        d      = get_ai_decisions(ai)
-        fd     = d["opus_judge"] or d["gpt_judge"] or ""
-        items.append(make_tag(fd) + f' <span style="color:#5a6070;font-size:11px;">{ticker}</span>')
-
-    return f"""<div class="exec-summary">
-      <div style="color:#4a6080;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:2px;">执行摘要</div>
-      <div class="exec-summary-items">{''.join(items)}</div>
-    </div>"""
-
+# ── AI区块 ────────────────────────────────────────────────────
 
 def build_ai_section(results, ai_results=None):
-    """AI分析区块：横向对比表 + 逐股详细理由"""
     if not ai_results:
         return ""
 
@@ -393,31 +548,21 @@ def build_ai_section(results, ai_results=None):
         if "error" in r: continue
         ticker = r["ticker"]
         ai     = ai_results.get(ticker, {})
-        d      = get_ai_decisions(ai)
-
-        def cell(key):
-            dec = d[key]
-            conf = ""
-            raw = ai.get(key, {}) if key in ["claude","gpt","deepseek"] else ai.get(key, {})
-            if raw and not raw.get("error"):
-                conf_val = raw.get("confidence", raw.get("final_confidence",""))
-                if conf_val:
-                    conf = f'<span class="conf-badge">{conf_val}</span>'
-            return f'<td>{make_tag(dec)}{conf}</td>'
+        d      = get_decisions(ai)
 
         matrix_rows += f"""<tr>
-          <td>
-            <span class="matrix-ticker">{ticker}</span>
-            <span class="matrix-price"> ${r['price']}</span>
-          </td>
-          {cell('claude')}{cell('gpt')}{cell('deepseek')}
-          {cell('opus_judge')}{cell('gpt_judge')}
+          <td><span class="bold" style="color:#ffffff;">{ticker}</span> <span class="gray" style="font-size:10px;">${r['price']}</span></td>
+          <td>{make_tag(d['claude'])}</td>
+          <td>{make_tag(d['gpt'])}</td>
+          <td>{make_tag(d['deepseek'])}</td>
+          <td>{make_tag(d['opus_judge'])}</td>
+          <td>{make_tag(d['gpt_judge'])}</td>
         </tr>"""
 
-    matrix_html = f"""<table class="ai-matrix-table">
+    matrix_html = f"""<table class="ai-matrix">
       <thead><tr>
         <th>标的</th>
-        <th>Claude Opus 4.7</th><th>GPT-5.5</th><th>DeepSeek V4</th>
+        <th>Claude</th><th>GPT</th><th>DeepSeek</th>
         <th>Opus 裁判</th><th>GPT 裁判</th>
       </tr></thead>
       <tbody>{matrix_rows}</tbody>
@@ -428,76 +573,79 @@ def build_ai_section(results, ai_results=None):
     for r in results:
         if "error" in r: continue
         ticker = r["ticker"]
-        price  = r["price"]
         ai     = ai_results.get(ticker, {})
         if not ai:
             continue
 
-        def model_col(name, label, key, is_judge=False):
-            raw = ai.get(key, {})
+        def model_block(label, key, is_judge=False):
+            raw = ai.get(key, {}) or {}
+            css_class = "judge" if is_judge else ""
+
             if not raw or raw.get("error"):
-                return f'<div class="ai-model-col"><div class="ai-model-label">{label}</div><div class="muted" style="font-size:11px;">调用失败</div></div>'
+                return f'''<div class="ai-model-block {css_class}">
+                  <div class="ai-model-name">{label}</div>
+                  <div class="gray" style="font-size:12px;">调用失败</div>
+                </div>'''
 
             if is_judge:
                 dec  = raw.get("final_decision","N/A")
                 body = raw.get("final_reason","")
                 trig = raw.get("final_trigger","")
-                risk = ""
                 conf = raw.get("final_confidence","")
                 cons = raw.get("consensus","")
                 divg = raw.get("divergence","")
                 agr  = raw.get("model_agreement","")
-                return f"""<div class="judge-col">
-                  <div class="judge-label">{label}</div>
-                  <div class="judge-decision {dc(dec)}">{dec}<span class="judge-agree">{agr}</span></div>
-                  <div class="judge-consensus">✅ 共识：{cons}</div>
-                  <div class="judge-divergence">🔀 分歧：{divg}</div>
-                  <div class="judge-body">{body}</div>
-                  {'<div class="judge-trigger">' + trig + '</div>' if trig else ''}
-                </div>"""
+
+                meta = ""
+                if cons:
+                    meta += f'<div class="judge-meta"><span class="label">共识：</span>{cons}</div>'
+                if divg:
+                    meta += f'<div class="judge-meta"><span class="label">分歧：</span>{divg}</div>'
+
+                return f'''<div class="ai-model-block judge">
+                  <div class="ai-model-name">{label}</div>
+                  <div class="ai-model-decision {color_class(dec)}">{dec}<span class="judge-tag">{agr}</span><span class="conf">置信 {conf}</span></div>
+                  {meta}
+                  <div class="ai-model-body">{body}</div>
+                  {f'<div class="ai-trigger">{trig}</div>' if trig else ''}
+                </div>'''
             else:
                 dec  = raw.get("decision","N/A")
                 body = raw.get("reason","")
                 trig = raw.get("trigger","")
                 risk = raw.get("key_risk","")
                 conf = raw.get("confidence","")
-                return f"""<div class="ai-model-col">
-                  <div class="ai-model-label">{label}</div>
-                  <div class="ai-model-decision {dc(dec)}">{dec} <span style="font-size:10px;color:#5a6070;font-weight:400;">· {conf}</span></div>
+
+                return f'''<div class="ai-model-block">
+                  <div class="ai-model-name">{label}</div>
+                  <div class="ai-model-decision {color_class(dec)}">{dec}<span class="conf">置信 {conf}</span></div>
                   <div class="ai-model-body">{body}</div>
-                  {'<div class="ai-model-trigger">' + trig + '</div>' if trig else ''}
-                  {'<div class="ai-model-risk">' + risk + '</div>' if risk else ''}
-                </div>"""
+                  {f'<div class="ai-trigger">{trig}</div>' if trig else ''}
+                  {f'<div class="ai-risk">{risk}</div>' if risk else ''}
+                </div>'''
 
-        detail_html += f"""<div class="ai-detail-block">
-          <div class="ai-ticker-header">
-            <span class="ai-ticker-name">{ticker}</span>
-            <span class="ai-ticker-price">${price}</span>
-          </div>
-          <div class="ai-models-grid">
-            {model_col("claude","Claude Opus 4.7","claude")}
-            {model_col("gpt","GPT-5.5","gpt")}
-            {model_col("deepseek","DeepSeek V4 Pro","deepseek")}
-          </div>
-          <div class="judge-grid">
-            {model_col("opus_judge","Opus 裁判（趋势+风控）","opus_judge",True)}
-            {model_col("gpt_judge","GPT 裁判（量化+概率）","gpt_judge",True)}
-          </div>
-        </div>"""
-        detail_html += '<hr class="divider">'
+        detail_html += f'''<div class="ai-detail">
+          <div class="ai-detail-header">{ticker}<span class="price">${r['price']}</span></div>
+          {model_block("Claude Opus 4.7", "claude")}
+          {model_block("GPT-5.5", "gpt")}
+          {model_block("DeepSeek V4 Pro", "deepseek")}
+          {model_block("Opus 裁判（趋势+风控）", "opus_judge", True)}
+          {model_block("GPT 裁判（量化+概率）", "gpt_judge", True)}
+        </div>'''
 
-    return f"""<div class="ai-wrap">
-      <div class="section-header">AI 多模型分析</div>
+    return f'''<div class="section-title">AI 多模型分析</div>
       {matrix_html}
-      <div style="font-size:10px;color:#3a4a5a;margin-bottom:14px;font-style:italic;">
-        ↓ 各标的详细分析理由
-      </div>
-      {detail_html}
-    </div>"""
+      {detail_html}'''
 
 
-def build_stock_section(result, cid, ai_data=None):
-    """逐股详情：一行摘要 + 图表 + 紧凑数据表，无AI模块"""
+# ── 单股详情 ─────────────────────────────────────────────────
+
+def data_row(key, val, val_class="", bold=False):
+    bold_class = " bold" if bold else ""
+    return f'<div class="data-row"><span class="key">{key}</span><span class="val {val_class}{bold_class}">{val}</span></div>'
+
+
+def build_stock_section(result, cid):
     t   = result["ticker"]
     p   = result["price"]
     d   = result["date"]
@@ -514,175 +662,194 @@ def build_stock_section(result, cid, ai_data=None):
     r12 = result["12_event"]
     bi  = r4.get("breakout_info") or {}
 
-    # 一行结论摘要
+    # 一行结论
     summary_parts = [
-        f'<span class="{tc(r2["conclusion"])}">{r2["conclusion"]}</span>',
-        f'<span class="{tc(r3["conclusion"])}">{r3["conclusion"]}</span>',
-        f'<span class="{tc(r4["type"])}">{r4["type"]}</span>',
-        f'<span>RSI {r8["rsi_val"]}</span>',
-        f'<span class="{tc(r7["conclusion"])}">{r7["conclusion"]}</span>',
-        f'<span class="{"bull" if r11["rr_pass"] else "bear"}">{r11["conclusion"][:12]}</span>',
+        f'<span class="{color_class(r2["conclusion"])} bold">{r2["conclusion"]}</span>',
+        f'<span class="{color_class(r3["conclusion"])}">{r3["conclusion"]}</span>',
+        f'<span class="{color_class(r4["type"])}">{r4["type"]}</span>',
+        f'<span class="gray">RSI {r8["rsi_val"]}</span>',
+        f'<span class="{"green" if r11["rr_pass"] else "red"}">{"赔率合格" if r11["rr_pass"] else "赔率不足"}</span>',
     ]
     summary_line = ' · '.join(summary_parts)
 
-    # 突破信息行
-    breakout_line = ""
+    # 突破信息
+    breakout_html = ""
     if bi:
-        breakout_line = f"""<div style="font-size:10px;color:#5a7090;margin-bottom:10px;padding:4px 8px;border-left:2px solid #2a4a6a;">
-          突破 {bi.get('struct_type','')} · 评分 {bi.get('score','?')}/5 · {'历史新高区域' if bi.get('is_all_time_area') else '近期前高'} · 目标法：{r11['target_method']}
-        </div>"""
+        breakout_html = f'''<div class="data-group">
+          <div class="data-group-title">突破分析</div>
+          {data_row("结构状态", bi.get("struct_type",""), color_class(bi.get("struct_type","")), bold=True)}
+          {data_row("质量评分", f"{bi.get('score','?')}/5")}
+          {data_row("位置", "历史新高区域" if bi.get("is_all_time_area") else "近期前高")}
+          {data_row("突破幅度", f"${bi.get('breakout_amp','?')}（阈值 ${round(bi.get('atr_val',0)*0.5,2)}）")}
+        </div>'''
 
-    # 数据表：分组展示
-    def row(k1, v1, cls1, k2, v2, cls2, k3="", v3="", cls3="", k4="", v4="", cls4=""):
-        def cell(k, v, c):
-            if not k: return "<td></td><td></td>"
-            return f'<td class="data-key">{k}</td><td class="data-val {c}">{v}</td>'
-        return f"<tr>{cell(k1,v1,cls1)}{cell(k2,v2,cls2)}{cell(k3,v3,cls3)}{cell(k4,v4,cls4)}</tr>"
+    rs_main = r6['vs_index'] if not r6.get('is_benchmark') else "基准资产"
 
-    rs_vs = f"vs {r6['index_name']}: {r6['vs_index']}" if not r6.get('is_benchmark') else r6['vs_index']
-    rs_sec = f"vs {r6['sector_name']}: {r6['vs_sector']}" if not r6.get('is_benchmark') else r6['vs_sector']
-
-    data_html = f"""
-    <div class="data-section">
-      <div class="data-section-title">趋势 · 结构</div>
-      <table class="data-table">
-        {row("MA200", f"${r2['ma200']} {r2['slope']}", tc(r2['conclusion']),
-             "MA60",  f"${r3['ma60']} {r3['slope60']}", "",
-             "MA20",  f"${r3['ma20']} {r3['slope20']}", "",
-             "偏离MA200", f"{r2['deviation']}%", 'bull' if r2['deviation']>0 else 'bear')}
-        {row("长期趋势", r2['conclusion'], tc(r2['conclusion']),
-             "中期趋势", r3['conclusion'], tc(r3['conclusion']),
-             "价格结构", r4['type'][:10], tc(r4['type']),
-             "结构结论", r4['conclusion'][:8], "")}
-      </table>
-    </div>
-    <div class="data-section">
-      <div class="data-section-title">关键位置</div>
-      <table class="data-table">
-        {row("阻力", f"${r5['resistance']}", "bear",
-             "确认位", f"${r5['confirm']}", "",
-             "支撑", f"${r5['support']}", "bull",
-             "失效位", f"${r5['invalidation']}", "warn")}
-      </table>
-    </div>
-    <div class="data-section">
-      <div class="data-section-title">动量 · 量价 · 波动率</div>
-      <table class="data-table">
-        {row("RSI(14)", r8['rsi'], "",
-             "MACD", r8['macd'][:14], "",
-             "量价比", str(r7['ratio']), tc(r7['conclusion']),
-             "ATR", f"${r9['atr']} ({r9['atr_pct']}%)", "")}
-        {row("动量结论", r8['conclusion'], tc(r8['conclusion']),
-             "量价结论", r7['conclusion'][:8], tc(r7['conclusion']),
-             "波动率", r9['vol_state'][:8], "",
-             "布林带宽", str(r9['bw_val']), "")}
-      </table>
-    </div>
-    <div class="data-section">
-      <div class="data-section-title">相对强弱</div>
-      <table class="data-table">
-        {row("大盘参照", rs_vs[:20], "",
-             "行业参照", rs_sec[:20], "",
-             "结论", r6['conclusion'][:10], tc(r6['conclusion']),
-             "", "", "")}
-      </table>
-    </div>
-    <div class="data-section">
-      <div class="data-section-title">风险赔率 · 交易类型</div>
-      <table class="data-table">
-        {row("入场参考", f"${r11['entry']}", "",
-             "短线止损", f"${r11['short_stop']}", "warn",
-             "中期止损", f"${r11['mid_stop']}", "warn",
-             "结构止损", f"${r11['structure_stop']}", "bear")}
-        {row("目标一", f"${r11['target1']} ({r11['t1_rr']}:1){'⚠️' if r11['t1_invalid'] else ''}", 'warn' if r11['t1_invalid'] else 'bull',
-             "目标二", f"${r11['target2']} ({r11['t2_rr']}:1)", "bull",
-             "赔率结论", r11['conclusion'][:12], 'bull' if r11['rr_pass'] else 'bear',
-             "交易类型", r10['type'][:8], tc(r10['suitable']))}
-      </table>
-    </div>
-    <div class="data-section">
-      <div class="data-section-title">事件风险</div>
-      <table class="data-table">
-        {row("检测结果", r12['event'][:20], "",
-             "风险等级", r12['risk'], 'warn' if r12['risk']=='高' else '',
-             "执行建议", r12['action'][:10], "",
-             "", "", "")}
-      </table>
-      <div style="font-size:10px;color:#3a4a5a;margin-top:3px;">{r12['disclaimer']}</div>
-    </div>"""
-
-    return f"""<div class="stock-wrap">
+    return f"""<div class="stock-block">
       <div class="stock-header">
         <span class="stock-name">{t}</span>
         <span class="stock-price">${p}</span>
         <span class="stock-date">{d}</span>
       </div>
-      <div class="stock-summary-line">{summary_line}</div>
-      {breakout_line}
+      <div class="stock-summary">{summary_line}</div>
       <div class="chart-wrap">
         <img src="cid:{cid}" class="chart-img" alt="{t}"/>
       </div>
-      {data_html}
+
+      <div class="data-group">
+        <div class="data-group-title">趋势</div>
+        {data_row("长期趋势", r2['conclusion'], color_class(r2['conclusion']), bold=True)}
+        {data_row("中期趋势", r3['conclusion'], color_class(r3['conclusion']))}
+        {data_row("MA200", f"${r2['ma200']}（{r2['slope']}）")}
+        {data_row("MA60",  f"${r3['ma60']}（{r3['slope60']}）")}
+        {data_row("MA20",  f"${r3['ma20']}（{r3['slope20']}）")}
+        {data_row("偏离MA200", f"{r2['deviation']}%", "green" if r2['deviation']>0 else "red")}
+      </div>
+
+      <div class="data-group">
+        <div class="data-group-title">价格结构</div>
+        {data_row("结构类型", r4['type'], color_class(r4['type']), bold=True)}
+        {data_row("结论", r4['conclusion'])}
+        {data_row("近期高点", " → ".join([f"${v}" for _,v in r4["highs"][-3:]]))}
+        {data_row("近期低点", " → ".join([f"${v}" for _,v in r4["lows"][-3:]]))}
+      </div>
+
+      <div class="data-group">
+        <div class="data-group-title">关键位置</div>
+        {data_row("阻力位", f"${r5['resistance']}", "red", bold=True)}
+        {data_row("确认位", f"${r5['confirm']}")}
+        {data_row("支撑位", f"${r5['support']}", "green", bold=True)}
+        {data_row("失效位", f"${r5['invalidation']}", "yellow")}
+      </div>
+
+      {breakout_html}
+
+      <div class="data-group">
+        <div class="data-group-title">动量 · 量价 · 波动率</div>
+        {data_row("RSI(14)", r8['rsi'])}
+        {data_row("MACD", r8['macd'])}
+        {data_row("MACD柱", r8['histogram'])}
+        {data_row("量价比", f"{r7['ratio']}（{r7['conclusion']}）", color_class(r7['conclusion']))}
+        {data_row("ATR(14)", f"${r9['atr']}（{r9['atr_pct']}%）")}
+        {data_row("波动率状态", r9['vol_state'])}
+      </div>
+
+      <div class="data-group">
+        <div class="data-group-title">相对强弱</div>
+        {data_row(f"vs {r6['index_name']}", r6['vs_index'])}
+        {data_row(f"vs {r6['sector_name']}", r6['vs_sector'])}
+        {data_row("结论", r6['conclusion'], color_class(r6['conclusion']))}
+      </div>
+
+      <div class="data-group">
+        <div class="data-group-title">交易类型 · 风险赔率</div>
+        {data_row("交易类型", r10['type'], color_class(r10['suitable']), bold=True)}
+        {data_row("是否适合", r10['suitable'], color_class(r10['suitable']))}
+        {data_row("入场参考", f"${r11['entry']}", bold=True)}
+        {data_row("短线止损", f"${r11['short_stop']}", "yellow")}
+        {data_row("中期止损", f"${r11['mid_stop']}", "yellow")}
+        {data_row("结构止损", f"${r11['structure_stop']}", "red")}
+        {data_row("目标一", f"${r11['target1']}（{r11['t1_rr']}:1）{'⚠️无效' if r11['t1_invalid'] else ''}", "yellow" if r11['t1_invalid'] else "green")}
+        {data_row("目标二", f"${r11['target2']}（{r11['t2_rr']}:1）", "green")}
+        {data_row("目标方法", r11['target_method'])}
+        {data_row("赔率结论", r11['conclusion'], "green" if r11['rr_pass'] else "red", bold=True)}
+      </div>
+
+      <div class="data-group">
+        <div class="data-group-title">事件风险</div>
+        {data_row("检测结果", r12['event'])}
+        {data_row("风险等级", r12['risk'], "yellow" if r12['risk']=='高' else "gray")}
+        {data_row("执行建议", r12['action'])}
+        <div class="event-note">{r12['disclaimer']}</div>
+      </div>
     </div>"""
 
+
+# ── 费用 ────────────────────────────────────────────────────
 
 def build_cost_html(cost):
     if not cost: return ""
     total = cost.get("total_cost", 0)
     per   = cost.get("per_model", {})
     parts = " · ".join([f"{k.split('/')[-1]} ${v['cost']}" for k, v in per.items()])
-    return f'<div style="font-size:10px;color:#3a4050;text-align:center;padding:8px;">API费用：{parts} · 合计 ${total}</div>'
+    return f'<div style="font-size:10px;color:{GRAY_DARK};text-align:center;padding:12px;">API 费用：{parts} · 合计 ${total}</div>'
 
 
-def build_full_html(results, chart_paths, ai_results=None, cost_summary=None):
-    date_str    = datetime.now().strftime("%Y-%m-%d")
-    cid_map     = {}
+# ── 完整HTML ──────────────────────────────────────────────────
+
+def build_full_html(results, chart_paths, ai_results=None, cost_summary=None,
+                    today_snapshot=None, changes=None, no_action_tickers=None):
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    cid_map  = {}
+
+    # 顶部今日动作卡
+    action_card = ""
+    if today_snapshot is not None:
+        action_card = build_action_card(today_snapshot, changes or {}, no_action_tickers or [], ai_results)
+
+    # 逐股详情
     stocks_html = ""
-
     for r in results:
         if "error" in r:
-            stocks_html += f'<div style="color:#ff5252;padding:10px;">{r["ticker"]} 数据获取失败</div>'
+            stocks_html += f'<div style="color:{RED};padding:10px;">{r["ticker"]} 数据获取失败</div>'
             continue
         ticker = r["ticker"]
         cid    = f"chart_{ticker.replace('-','_')}"
         cid_map[cid] = chart_paths.get(ticker, "")
-        stocks_html += build_stock_section(r, cid, (ai_results or {}).get(ticker))
-        stocks_html += '<hr class="divider">'
+        stocks_html += build_stock_section(r, cid)
 
     html = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8">{STYLE}</head>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+{STYLE}
+</head>
 <body><div class="container">
 
   <div class="header">
     <div class="header-title">📈 股票技术分析日报</div>
-    <div class="header-sub">{date_str} · 12项框架 · Claude Opus 4.7 / GPT-5.5 / DeepSeek V4 Pro</div>
+    <div class="header-sub">{date_str} · 12项框架 · Opus 4.7 / GPT-5.5 / DeepSeek V4 Pro</div>
   </div>
 
+  {action_card}
+
   {build_overview(results, ai_results)}
-  <hr class="divider">
-  {build_exec_summary(results, ai_results)}
+
   {build_ai_section(results, ai_results)}
-  <hr class="divider">
-  <div class="section-header">逐标的详情</div>
+
+  <div class="section-title">逐标的详情</div>
   {stocks_html}
+
   {build_cost_html(cost_summary)}
   <div class="footer">
-    仅供参考，不构成投资建议 · 数据来源 Yahoo Finance · AI via OpenRouter
+    仅供参考，不构成投资建议<br>
+    数据来源 Yahoo Finance · AI via OpenRouter
   </div>
 </div></body></html>"""
     return html, cid_map
 
 
+# ── 发送 ────────────────────────────────────────────────────
+
 def send_email(results, chart_paths, gmail_user, gmail_password,
-               to_addr=None, ai_results=None, cost_summary=None):
+               to_addr=None, ai_results=None, cost_summary=None,
+               today_snapshot=None, changes=None, no_action_tickers=None):
     if to_addr is None:
         to_addr = gmail_user
 
-    html_content, cid_map = build_full_html(results, chart_paths, ai_results, cost_summary)
+    html_content, cid_map = build_full_html(
+        results, chart_paths, ai_results, cost_summary,
+        today_snapshot, changes, no_action_tickers
+    )
     date_str = datetime.now().strftime("%Y-%m-%d")
 
+    # 邮件标题：如有重要变化，标题加提示
+    subject_extra = ""
+    if changes:
+        subject_extra = f" · {len(changes)}个关注"
+
     msg = MIMEMultipart("related")
-    msg["Subject"] = f"📈 股票技术分析日报 · {date_str}"
+    msg["Subject"] = f"📈 股票分析日报 · {date_str}{subject_extra}"
     msg["From"]    = gmail_user
     msg["To"]      = to_addr
 
