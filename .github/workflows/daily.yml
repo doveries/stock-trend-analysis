@@ -1,0 +1,54 @@
+name: 股票技术分析日报
+
+on:
+  schedule:
+    # 北京时间 20:00 = UTC 12:00
+    - cron: '0 12 * * 1-5'   # 周一到周五
+  workflow_dispatch:
+    inputs:
+      extra_tickers:
+        description: '额外分析的股票代码（空格分隔，如：AAPL NVDA）'
+        required: false
+        default: ''
+
+jobs:
+  analyze-and-send:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装中文字体
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y fonts-wqy-microhei fonts-wqy-zenhei
+          fc-cache -f -v
+
+      - name: 设置 Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 运行分析并发送邮件
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: |
+          if [ -n "${{ github.event.inputs.extra_tickers }}" ]; then
+            python main.py ${{ github.event.inputs.extra_tickers }}
+          else
+            python main.py
+          fi
+
+      - name: 上传图表（调试用）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: charts-${{ github.run_number }}
+          path: /tmp/charts/
+          retention-days: 3
