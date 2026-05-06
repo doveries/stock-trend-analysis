@@ -1,7 +1,7 @@
 """
 V2 AI分析模块
 并行调用 Claude Opus 4.7 / GPT-5.5 / DeepSeek V4 Pro
-最终由 Claude Opus 4.7 做元分析（综合裁判）
+元分析由 Opus 4.7 和 GPT-5.5 各自独立解读一遍
 每个模型每天 $5 限额保护
 """
 
@@ -10,39 +10,33 @@ import aiohttp
 import json
 import os
 import time
-from datetime import datetime
 
-# ── 模型配置 ─────────────────────────────────────────────────
 MODELS = {
     "claude":   "anthropic/claude-opus-4.7",
     "gpt":      "openai/gpt-5.5",
     "deepseek": "deepseek/deepseek-v4-pro",
 }
-JUDGE_MODEL = "anthropic/claude-opus-4.7"
+JUDGE_MODELS = {
+    "opus_judge": "anthropic/claude-opus-4.7",
+    "gpt_judge":  "openai/gpt-5.5",
+}
 
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_URL     = "https://openrouter.ai/api/v1/chat/completions"
+DAILY_BUDGET       = 5.0
+REQUEST_TIMEOUT    = 90
 
-# 每个模型每天费用上限（美元）
-DAILY_BUDGET_PER_MODEL = 5.0
-
-# 粗略价格估算（$/1K output tokens），用于限额检查
 MODEL_PRICE_PER_1K = {
     "anthropic/claude-opus-4.7": 0.015,
     "openai/gpt-5.5":            0.020,
     "deepseek/deepseek-v4-pro":  0.002,
 }
 
-# 请求超时（秒）
-REQUEST_TIMEOUT = 90
-
-
-# ── 费用追踪 ─────────────────────────────────────────────────
 
 class CostTracker:
     def __init__(self):
-        self.usage = {}   # model -> {tokens, cost}
+        self.usage = {}
 
-    def record(self, model: str, output_tokens: int):
+    def record(self, model, output_tokens):
         price = MODEL_PRICE_PER_1K.get(model, 0.01)
         cost  = output_tokens / 1000 * price
         if model not in self.usage:
@@ -50,25 +44,19 @@ class CostTracker:
         self.usage[model]["tokens"] += output_tokens
         self.usage[model]["cost"]   += cost
 
-    def check_budget(self, model: str) -> bool:
-        """返回True表示未超限，可以继续调用"""
-        current = self.usage.get(model, {}).get("cost", 0.0)
-        return current < DAILY_BUDGET_PER_MODEL
+    def check_budget(self, model):
+        return self.usage.get(model, {}).get("cost", 0.0) < DAILY_BUDGET
 
-    def summary(self) -> dict:
+    def summary(self):
         total = sum(v["cost"] for v in self.usage.values())
         return {
-            "per_model": {k: {"tokens": v["tokens"], "cost": round(v["cost"], 4)}
-                          for k, v in self.usage.items()},
+            "per_model":  {k: {"tokens": v["tokens"], "cost": round(v["cost"], 4)}
+                           for k, v in self.usage.items()},
             "total_cost": round(total, 4),
-            "budget_per_model": DAILY_BUDGET_PER_MODEL,
         }
 
 
-# ── Prompt构建 ───────────────────────────────────────────────
-
-def build_analysis_prompt(result: dict) -> str:
-    """把12项框架数据格式化为AI可读的结构化prompt"""
+def build_analysis_prompt(result):
     t   = result["ticker"]
     p   = result["price"]
     d   = result["date"]
@@ -86,109 +74,80 @@ def build_analysis_prompt(result: dict) -> str:
 
     highs_str = " → ".join([f"${v}" for _, v in r4["highs"][-3:]]) or "数据不足"
     lows_str  = " → ".join([f"${v}" for _, v in r4["lows"][-3:]])  or "数据不足"
+    bi        = r4.get("breakout_info") or {}
+    breakout_str = (f"突破信息：{bi.get('struct_type','')}，质量评分{bi.get('score','N/A')}/5，"
+                    f"{'历史新高区域' if bi.get('is_all_time_area') else '近期前高'}"
+                    if bi else "无突破信号")
 
-    prompt = f"""你是专业技术分析师，以下是 {t} 的系统化技术分析数据（{d}），请基于这些数据给出你的判断。
+    return f"""你是专业技术分析师，以下是 {t} 的系统化技术分析数据（{d}），请基于这些数据给出判断。
 
-【基础信息】
-标的：{t} | 当前价：${p} | 分析日期：{d}
+【基础信息】标的：{t} | 当前价：${p} | 日期：{d}
 
-【长期趋势（MA200维度）】
-MA200：${r2['ma200']} | 价格偏离：{r2['deviation']}% | MA200斜率：{r2['slope']}
-结论：{r2['conclusion']}
+【长期趋势】MA200：${r2['ma200']} | 偏离：{r2['deviation']}% | 斜率：{r2['slope']} | 结论：{r2['conclusion']}
+【中期趋势】MA20：${r3['ma20']}（{r3['slope20']}）| MA60：${r3['ma60']}（{r3['slope60']}）| 结论：{r3['conclusion']}
+【价格结构】{r4['type']} | {r4['conclusion']}
+【突破分析】{breakout_str}
+【近期高点】{highs_str}
+【近期低点】{lows_str}
+【关键位置】阻力：${r5['resistance']} | 确认位：${r5['confirm']} | 支撑：${r5['support']} | 失效位：${r5['invalidation']}
+【相对强弱】vs {r6['index_name']}：{r6['vs_index']} | vs {r6['sector_name']}：{r6['vs_sector']} | 结论：{r6['conclusion']}
+【量价】上涨均量：{r7['up_vol']}M | 下跌均量：{r7['down_vol']}M | 量价比：{r7['ratio']} | {r7['conclusion']}
+【动量】RSI：{r8['rsi']} | MACD：{r8['macd']} | 柱状图：{r8['histogram']} | {r8['conclusion']}
+【波动率】ATR：${r9['atr']}（{r9['atr_pct']}%）| 状态：{r9['vol_state']} | 仓位影响：{r9['pos_impact']}
+【交易类型】{r10['type']} | 适合：{r10['suitable']} | 等待：{r10['wait']}
+【赔率】目标一：${r11['target1']}（{r11['t1_rr']}:1）| 目标二：${r11['target2']}（{r11['t2_rr']}:1）| {r11['conclusion']}
+【止损参考】短线：${r11['short_stop']} | 中期：${r11['mid_stop']} | 结构：${r11['structure_stop']}
+【事件风险】{r12['event']} | 等级：{r12['risk']} | {r12['disclaimer']}
 
-【中期趋势（MA20/MA60维度）】
-MA20：${r3['ma20']}（{r3['slope20']}）| MA60：${r3['ma60']}（{r3['slope60']}）
-结论：{r3['conclusion']}
+注意：如果赔率结论为"不合格"，你的决策不能输出"买入"或"小仓试多"。
 
-【价格结构】
-近期高点序列：{highs_str}
-近期低点序列：{lows_str}
-结构类型：{r4['type']} | 确认状态：{r4['conclusion']}
-
-【关键价格位】
-最近阻力：${r5['resistance']} | 关键确认位：${r5['confirm']}
-最近支撑：${r5['support']} | 结构失效位：${r5['invalidation']}
-
-【相对强弱（近20日）】
-vs {r6['index_name']}：{r6['vs_index']}
-vs {r6['sector_name']}：{r6['vs_sector']}
-结论：{r6['conclusion']}
-
-【量价确认（近10日）】
-上涨日均量：{r7['up_vol']}M | 下跌日均量：{r7['down_vol']}M | 量价比：{r7['ratio']}
-结论：{r7['conclusion']}
-
-【动量状态】
-RSI(14)：{r8['rsi']} | MACD：{r8['macd']}
-MACD柱状图：{r8['histogram']}
-结论：{r8['conclusion']}
-
-【波动率状态】
-ATR(14)：${r9['atr']}（占价格{r9['atr_pct']}%）| 布林带宽度：{r9['bw_val']}
-波动率状态：{r9['vol_state']} | 仓位影响：{r9['pos_impact']}
-
-【交易类型判断】
-类型：{r10['type']} | 是否适合：{r10['suitable']} | 是否等待确认：{r10['wait']}
-
-【风险参考位（需人工确认）】
-短线止损参考：${r11['short_stop']} | 中期止损参考：${r11['mid_stop']} | 结构止损参考：${r11['structure_stop']}
-目标一参考：${r11['target1']} | 目标二参考：${r11['target2']}
-
-【事件风险】
-{r12['event']} | 风险等级：{r12['risk']} | 建议：{r12['action']}
-
----
-请严格按以下JSON格式输出，不要有任何额外文字：
+请严格按以下JSON格式输出，不要有额外文字：
 {{
   "decision": "买入/小仓试多/持有/等待确认/不交易",
   "reason": "核心理由，100字以内",
   "key_risk": "最大风险点，50字以内",
-  "confidence": "高/中/低",
-  "support_zone": "{r5['support']}-{r5['invalidation']}",
-  "resistance_zone": "{r5['resistance']}"
+  "trigger": "触发买入/加仓的条件，60字以内",
+  "confidence": "高/中/低"
 }}"""
-    return prompt
 
 
-def build_judge_prompt(ticker: str, price: float,
-                       claude_result: dict, gpt_result: dict, deepseek_result: dict) -> str:
-    """元分析prompt：让Opus综合三个模型的结论"""
+def build_judge_prompt(ticker, price, claude_r, gpt_r, deepseek_r, judge_role):
+    """元分析prompt，judge_role区分Opus和GPT的视角"""
+    role_str = ("作为Claude Opus，请从趋势跟踪和风险控制的角度综合评判"
+                if judge_role == "opus" else
+                "作为GPT-5.5，请从量化逻辑和概率分布的角度综合评判")
 
     def fmt(name, r):
-        if r.get("error"):
-            return f"【{name}】调用失败：{r['error']}"
-        return (f"【{name}】\n"
-                f"  决策：{r.get('decision','N/A')} | 置信度：{r.get('confidence','N/A')}\n"
+        if not r or r.get("error"):
+            return f"【{name}】调用失败"
+        return (f"【{name}】决策：{r.get('decision','N/A')} | 置信度：{r.get('confidence','N/A')}\n"
                 f"  理由：{r.get('reason','N/A')}\n"
-                f"  最大风险：{r.get('key_risk','N/A')}")
+                f"  触发条件：{r.get('trigger','N/A')}\n"
+                f"  风险：{r.get('key_risk','N/A')}")
 
-    return f"""你是资深投资顾问，以下是三个AI模型对 {ticker}（当前价 ${price}）的独立技术分析结论：
+    return f"""{role_str}，以下是三个AI模型对 {ticker}（当前价 ${price}）的独立技术分析：
 
-{fmt('Claude Opus 4.7', claude_result)}
+{fmt('Claude Opus 4.7', claude_r)}
 
-{fmt('GPT-5.5', gpt_result)}
+{fmt('GPT-5.5', gpt_r)}
 
-{fmt('DeepSeek V4 Pro', deepseek_result)}
+{fmt('DeepSeek V4 Pro', deepseek_r)}
 
-请综合以上三个模型的判断，输出元分析结论。严格按以下JSON格式，不要有额外文字：
+请综合输出元分析结论。严格按以下JSON格式，不要有额外文字：
 {{
   "consensus": "三模型共同点，60字以内",
-  "divergence": "三模型分歧点，60字以内，如无分歧填'三模型判断基本一致'",
+  "divergence": "分歧点，60字以内，无分歧填'判断基本一致'",
   "final_decision": "买入/小仓试多/持有/等待确认/不交易",
-  "final_reason": "综合裁判理由，120字以内",
+  "final_reason": "综合理由，120字以内",
+  "final_trigger": "触发条件，80字以内",
   "final_confidence": "高/中/低",
   "model_agreement": "高度一致/基本一致/存在分歧/明显分歧"
 }}"""
 
 
-# ── API调用 ──────────────────────────────────────────────────
-
-async def call_openrouter(session: aiohttp.ClientSession,
-                          model: str, prompt: str,
-                          api_key: str, tracker: CostTracker) -> dict:
-    """单次异步调用OpenRouter"""
+async def call_openrouter(session, model, prompt, api_key, tracker):
     if not tracker.check_budget(model):
-        return {"error": f"已超出今日预算 ${DAILY_BUDGET_PER_MODEL}"}
+        return {"error": f"已超出今日预算 ${DAILY_BUDGET}"}
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -197,9 +156,9 @@ async def call_openrouter(session: aiohttp.ClientSession,
         "X-Title":       "Stock Technical Analysis",
     }
     payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 512,
+        "model":       model,
+        "messages":    [{"role": "user", "content": prompt}],
+        "max_tokens":  600,
         "temperature": 0.3,
     }
 
@@ -209,21 +168,17 @@ async def call_openrouter(session: aiohttp.ClientSession,
             timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
         ) as resp:
             data = await resp.json()
-
             if resp.status != 200:
-                return {"error": f"HTTP {resp.status}: {data.get('error', {}).get('message', str(data))}"}
+                return {"error": f"HTTP {resp.status}: {data.get('error',{}).get('message', str(data))}"}
 
             content = data["choices"][0]["message"]["content"].strip()
-            output_tokens = data.get("usage", {}).get("completion_tokens", 200)
-            tracker.record(model, output_tokens)
+            tracker.record(model, data.get("usage", {}).get("completion_tokens", 300))
 
-            # 解析JSON
             try:
-                # 去掉可能的markdown代码块
                 clean = content.replace("```json", "").replace("```", "").strip()
                 return json.loads(clean)
             except json.JSONDecodeError:
-                return {"error": f"JSON解析失败", "raw": content[:200]}
+                return {"error": "JSON解析失败", "raw": content[:200]}
 
     except asyncio.TimeoutError:
         return {"error": f"请求超时（>{REQUEST_TIMEOUT}s）"}
@@ -231,90 +186,73 @@ async def call_openrouter(session: aiohttp.ClientSession,
         return {"error": str(e)}
 
 
-async def analyze_one_ticker_async(session: aiohttp.ClientSession,
-                                   result: dict, api_key: str,
-                                   tracker: CostTracker) -> dict:
-    """对单只股票并行调用三个模型，然后元分析"""
+async def analyze_one_ticker_async(session, result, api_key, tracker):
     ticker = result["ticker"]
     price  = result["price"]
     prompt = build_analysis_prompt(result)
 
     print(f"  [{ticker}] 并行调用三模型...")
 
-    # 并行调用
-    claude_task   = call_openrouter(session, MODELS["claude"],   prompt, api_key, tracker)
-    gpt_task      = call_openrouter(session, MODELS["gpt"],      prompt, api_key, tracker)
-    deepseek_task = call_openrouter(session, MODELS["deepseek"], prompt, api_key, tracker)
-
+    # 三模型并行
     claude_r, gpt_r, deepseek_r = await asyncio.gather(
-        claude_task, gpt_task, deepseek_task
+        call_openrouter(session, MODELS["claude"],   prompt, api_key, tracker),
+        call_openrouter(session, MODELS["gpt"],      prompt, api_key, tracker),
+        call_openrouter(session, MODELS["deepseek"], prompt, api_key, tracker),
     )
 
-    print(f"  [{ticker}] Claude: {claude_r.get('decision', claude_r.get('error', '?'))}")
-    print(f"  [{ticker}] GPT:    {gpt_r.get('decision', gpt_r.get('error', '?'))}")
-    print(f"  [{ticker}] DS:     {deepseek_r.get('decision', deepseek_r.get('error', '?'))}")
+    print(f"  [{ticker}] Claude: {claude_r.get('decision', claude_r.get('error','?'))}")
+    print(f"  [{ticker}] GPT:    {gpt_r.get('decision', gpt_r.get('error','?'))}")
+    print(f"  [{ticker}] DS:     {deepseek_r.get('decision', deepseek_r.get('error','?'))}")
 
-    # 元分析
-    judge_prompt = build_judge_prompt(ticker, price, claude_r, gpt_r, deepseek_r)
-    judge_r = await call_openrouter(session, JUDGE_MODEL, judge_prompt, api_key, tracker)
-    print(f"  [{ticker}] 元分析: {judge_r.get('final_decision', judge_r.get('error', '?'))}")
+    # 元分析：Opus和GPT各自独立解读，并行跑
+    opus_prompt = build_judge_prompt(ticker, price, claude_r, gpt_r, deepseek_r, "opus")
+    gpt_prompt  = build_judge_prompt(ticker, price, claude_r, gpt_r, deepseek_r, "gpt")
+
+    opus_judge, gpt_judge = await asyncio.gather(
+        call_openrouter(session, JUDGE_MODELS["opus_judge"], opus_prompt, api_key, tracker),
+        call_openrouter(session, JUDGE_MODELS["gpt_judge"],  gpt_prompt,  api_key, tracker),
+    )
+
+    print(f"  [{ticker}] Opus元分析: {opus_judge.get('final_decision', opus_judge.get('error','?'))}")
+    print(f"  [{ticker}] GPT元分析:  {gpt_judge.get('final_decision', gpt_judge.get('error','?'))}")
 
     return {
-        "ticker":   ticker,
-        "claude":   claude_r,
-        "gpt":      gpt_r,
-        "deepseek": deepseek_r,
-        "judge":    judge_r,
+        "ticker":     ticker,
+        "claude":     claude_r,
+        "gpt":        gpt_r,
+        "deepseek":   deepseek_r,
+        "opus_judge": opus_judge,
+        "gpt_judge":  gpt_judge,
     }
 
 
-async def run_ai_analysis_async(results: list, api_key: str) -> tuple:
-    """对所有股票跑AI分析，返回(ai_results, cost_summary)"""
-    tracker = CostTracker()
+async def run_ai_analysis_async(results, api_key):
+    tracker    = CostTracker()
     ai_results = {}
-
-    # 过滤掉数据获取失败的标的
-    valid = [r for r in results if "error" not in r]
+    valid      = [r for r in results if "error" not in r]
 
     async with aiohttp.ClientSession() as session:
-        # 股票之间串行（避免同时发太多请求），每只内部并行
         for r in valid:
             ai_result = await analyze_one_ticker_async(session, r, api_key, tracker)
             ai_results[r["ticker"]] = ai_result
-            await asyncio.sleep(2)  # 股票间间隔2秒
+            await asyncio.sleep(2)
 
     return ai_results, tracker.summary()
 
 
-def run_ai_analysis(results: list) -> tuple:
-    """同步入口，供main.py调用"""
+def run_ai_analysis(results):
     api_key = os.environ.get("OPENROUTER_API_KEY", "")
     if not api_key:
         print("⚠️ 未找到 OPENROUTER_API_KEY，跳过AI分析")
         return {}, {}
 
     print(f"\n{'='*60}")
-    print(f"  V2 AI综合分析")
-    print(f"  模型：{', '.join(MODELS.values())}")
-    print(f"  预算：每模型 ${DAILY_BUDGET_PER_MODEL}/天")
+    print(f"  V2 AI综合分析（元分析：Opus + GPT双解读）")
     print(f"{'='*60}")
 
     start = time.time()
     ai_results, cost = asyncio.run(run_ai_analysis_async(results, api_key))
     elapsed = round(time.time() - start, 1)
 
-    print(f"\n✅ AI分析完成，耗时 {elapsed}s")
-    print(f"   总费用：${cost.get('total_cost', 0)}")
-    for model, info in cost.get("per_model", {}).items():
-        print(f"   {model}: {info['tokens']} tokens = ${info['cost']}")
-
+    print(f"\n✅ AI分析完成，耗时 {elapsed}s | 总费用：${cost.get('total_cost',0)}")
     return ai_results, cost
-
-
-if __name__ == "__main__":
-    # 本地测试
-    from analyze import analyze_all
-    results = analyze_all(["TSLA"])
-    ai_results, cost = run_ai_analysis(results)
-    print(json.dumps(ai_results, ensure_ascii=False, indent=2))
-    print("费用:", cost)

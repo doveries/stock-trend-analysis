@@ -1,5 +1,5 @@
 """
-系统化技术分析 - 12项框架
+系统化技术分析 - 12项框架 v2.1
 手写所有指标计算，无pandas-ta依赖，兼容Python 3.10+
 """
 
@@ -13,30 +13,31 @@ import random
 
 warnings.filterwarnings("ignore")
 
+# ── 参考标的映射（按资产类型区分基准）────────────────────────
 REFERENCE_MAP = {
-    "TSLA":  {"index": "QQQ",  "sector": "QQQ"},
-    "BRK-B": {"index": "SPY",  "sector": "SPY"},
-    "GLD":   {"index": "SPY",  "sector": "UUP"},
-    "CCJ":   {"index": "SPY",  "sector": "URA"},
-    "FCX":   {"index": "SPY",  "sector": "CPER"},
-    "SPY":   {"index": "SPY",  "sector": "SPY"},
-    "QQQ":   {"index": "QQQ",  "sector": "QQQ"},
+    "TSLA":  {"index": "QQQ",  "sector": "XLY"},   # 纳指 + 消费板块
+    "BRK-B": {"index": "SPY",  "sector": "XLF"},   # 标普 + 金融板块
+    "GLD":   {"index": "UUP",  "sector": "SLV"},   # 美元 + 白银
+    "CCJ":   {"index": "SPY",  "sector": "URA"},   # 标普 + 铀矿ETF
+    "FCX":   {"index": "SPY",  "sector": "CPER"},  # 标普 + 铜ETF
+    "SPY":   {"index": "SPY",  "sector": "SPY",  "is_benchmark": True},
+    "QQQ":   {"index": "SPY",  "sector": "QQQ",  "is_benchmark": True},
 }
 
 STOCK_POOL = ["SPY", "QQQ", "BRK-B", "TSLA", "GLD", "CCJ", "FCX"]
 
-# 需要预先拉取的参考ETF（去重）
 ALL_REF_TICKERS = list(set(
-    v for refs in REFERENCE_MAP.values() for v in refs.values()
+    v for refs in REFERENCE_MAP.values()
+    for k, v in refs.items() if k != "is_benchmark"
 ) | {"SPY"})
 
 
 # ── 指标计算 ─────────────────────────────────────────────────
 
 def calc_rsi(close, period=14):
-    delta = close.diff()
-    gain  = delta.clip(lower=0)
-    loss  = (-delta).clip(lower=0)
+    delta    = close.diff()
+    gain     = delta.clip(lower=0)
+    loss     = (-delta).clip(lower=0)
     avg_gain = gain.ewm(com=period-1, min_periods=period).mean()
     avg_loss = loss.ewm(com=period-1, min_periods=period).mean()
     rs = avg_gain / avg_loss.replace(0, np.nan)
@@ -85,7 +86,6 @@ def fetch_data(ticker, period="2y"):
 
 
 def fetch_all_ref_data():
-    """一次性拉取所有参考ETF数据，后续复用，避免重复请求"""
     cache = {}
     print(f"  预拉取参考数据：{ALL_REF_TICKERS}")
     for ticker in ALL_REF_TICKERS:
@@ -121,7 +121,102 @@ def find_swing_points(series, order=10):
     return highs, lows
 
 
-def structure_type(highs, lows):
+def analyze_breakout(df, highs, lows, atr_val):
+    """
+    创前高突破分析
+    基于ChatGPT框架 + 我们的均线兜底规则
+    返回结构状态和突破质量
+    """
+    close      = df["Close"]
+    volume     = df["Volume"]
+    price      = float(close.iloc[-1])
+    close_1d   = float(close.iloc[-1])   # 最新收盘价
+    close_2d   = float(close.iloc[-2]) if len(close) > 1 else price
+
+    # 所有已识别摆动高点的最高值
+    max_swing_high = max([v for _, v in highs]) if highs else 0
+
+    # 近252日最高价（历史高位判断）
+    high_252 = float(df["High"].iloc[-252:].max())
+
+    # ── 是否创前高 ────────────────────────────────────────────
+    broke_swing_high  = close_1d > max_swing_high           # 突破摆动高点
+    near_52w_high     = price >= high_252 * 0.98            # 接近52周高位
+    is_all_time_area  = price >= high_252 * 0.99            # 历史高位区域
+
+    if not broke_swing_high:
+        return None  # 没有创前高，用原始结构判断
+
+    # ── 突破质量评分（5项取2） ────────────────────────────────
+    score = 0
+    details = []
+
+    # 1) 收盘站上前高
+    if close_1d > max_swing_high:
+        score += 1
+        details.append("收盘突破✓")
+
+    # 2) 连续2日收盘站上
+    two_day_confirm = close_1d > max_swing_high and close_2d > max_swing_high
+    if two_day_confirm:
+        score += 1
+        details.append("连续2日确认✓")
+
+    # 3) 突破幅度 > 0.5×ATR
+    breakout_amp = close_1d - max_swing_high
+    if breakout_amp > 0.5 * atr_val:
+        score += 1
+        details.append(f"突破幅度{round(breakout_amp,2)}>0.5ATR✓")
+
+    # 4) 成交量 > 20日均量×1.2
+    vol_ma20   = float(volume.iloc[-20:].mean())
+    vol_today  = float(volume.iloc[-1])
+    if vol_today > vol_ma20 * 1.2:
+        score += 1
+        details.append("放量突破✓")
+
+    # 5) RSI未极端过热（<80）
+    rsi_series = calc_rsi(close)
+    rsi_now    = float(rsi_series.iloc[-1])
+    if rsi_now < 80:
+        score += 1
+        details.append(f"RSI={rsi_now:.0f}<80✓")
+
+    # 检测假突破：近3日是否跌回前高下方
+    recent_close_min = float(close.iloc[-3:].min())
+    fake_breakout = (recent_close_min < max_swing_high) and (close_1d > max_swing_high)
+
+    # ── 输出结构状态 ──────────────────────────────────────────
+    if fake_breakout:
+        struct_type = "假突破风险"
+        struct_concl = "近3日曾跌回前高下方，突破存疑"
+    elif score >= 3 and two_day_confirm:
+        struct_type = "突破确认" if not is_all_time_area else "历史新高·突破确认"
+        struct_concl = f"质量评分{score}/5，{', '.join(details)}"
+    elif score >= 2:
+        struct_type = "突破待确认" if not is_all_time_area else "历史新高·待确认"
+        struct_concl = f"质量评分{score}/5，{', '.join(details)}，建议等回踩确认"
+    else:
+        struct_type = "突破存疑" if not is_all_time_area else "历史新高·突破存疑"
+        struct_concl = f"质量评分{score}/5，量能或幅度不足，谨慎追高"
+
+    return {
+        "breakout":          True,
+        "max_swing_high":    max_swing_high,
+        "is_all_time_area":  is_all_time_area,
+        "near_52w_high":     near_52w_high,
+        "score":             score,
+        "details":           details,
+        "fake_breakout":     fake_breakout,
+        "struct_type":       struct_type,
+        "struct_conclusion": struct_concl,
+        "breakout_amp":      round(breakout_amp, 2),
+        "atr_val":           round(atr_val, 2),
+    }
+
+
+def structure_type_original(highs, lows):
+    """原始摆动点结构判断"""
     if len(highs) < 2 or len(lows) < 2:
         return "数据不足", "未确认"
     hh = highs[-1][1] > highs[-2][1]
@@ -145,8 +240,13 @@ def volume_analysis(df, window=10):
     elif ratio >= 1.0: c = "中性偏多"
     elif ratio >= 0.8: c = "中性偏弱"
     else:              c = "警惕（上涨缩量）"
-    return {"up_vol": round(up_vol/1e6, 2), "down_vol": round(down_vol/1e6, 2),
-            "ratio": round(ratio, 2), "conclusion": c}
+    return {
+        "up_vol":   round(up_vol / 1e6, 2),
+        "down_vol": round(down_vol / 1e6, 2),
+        "ratio":    round(ratio, 2),
+        "conclusion": c,
+        "vol_ma20": round(float(df["Volume"].iloc[-20:].mean()) / 1e6, 2),
+    }
 
 
 def momentum_analysis(df):
@@ -168,10 +268,12 @@ def momentum_analysis(df):
     con = ("支持" if macd_val > 0 and rsi_val >= 50 else
            "警惕" if macd_val < 0 and rsi_val < 45  else "中性")
 
-    return {"rsi": rl, "rsi_val": rsi_val, "macd": ml, "macd_val": macd_val,
-            "histogram": hl, "hist_val": hist_val,
-            "macd_series": macd_line, "signal_series": sig_line,
-            "hist_series": hist, "rsi_series": rsi_s, "conclusion": con}
+    return {
+        "rsi": rl, "rsi_val": rsi_val, "macd": ml, "macd_val": macd_val,
+        "histogram": hl, "hist_val": hist_val,
+        "macd_series": macd_line, "signal_series": sig_line,
+        "hist_series": hist, "rsi_series": rsi_s, "conclusion": con,
+    }
 
 
 def volatility_analysis(df):
@@ -186,20 +288,69 @@ def volatility_analysis(df):
     elif bw_val < bw_prv * 0.9: vs, pi = "收缩（可能酝酿突破）", "正常"
     else:                        vs, pi = "震荡", "正常"
 
-    return {"atr": atr_val, "atr_pct": round(atr_val / price * 100, 2),
-            "atr_series": atr_s, "vol_state": vs, "pos_impact": pi,
-            "bb_upper": round(float(upper.iloc[-1]), 2),
-            "bb_lower": round(float(lower.iloc[-1]), 2),
-            "bw_val": bw_val,
-            "bb_upper_series": upper, "bb_lower_series": lower, "bb_mid_series": mid}
+    return {
+        "atr": atr_val, "atr_pct": round(atr_val / price * 100, 2),
+        "atr_series": atr_s, "vol_state": vs, "pos_impact": pi,
+        "bb_upper": round(float(upper.iloc[-1]), 2),
+        "bb_lower": round(float(lower.iloc[-1]), 2),
+        "bw_val": bw_val,
+        "bb_upper_series": upper, "bb_lower_series": lower, "bb_mid_series": mid,
+    }
 
 
 def relative_strength(ticker, df, ref_cache, window=20):
-    """使用预拉取的缓存数据，不再重复请求"""
+    """按资产类型选择合适的基准，SPY/QQQ特殊处理"""
     refs = REFERENCE_MAP.get(ticker, {"index": "SPY", "sector": "SPY"})
+    is_benchmark = refs.get("is_benchmark", False)
+
+    # SPY/QQQ作为基准资产，不做自比
+    if is_benchmark:
+        if ticker == "SPY":
+            # SPY和QQQ比
+            other = "QQQ"
+            other_df = ref_cache.get(other)
+            if other_df is not None and not other_df.empty:
+                t_ret = (float(df["Close"].iloc[-1]) / float(df["Close"].iloc[-window]) - 1) * 100
+                o_ret = (float(other_df["Close"].iloc[-1]) / float(other_df["Close"].iloc[-window]) - 1) * 100
+                diff  = t_ret - o_ret
+                label = (f"强于QQQ +{round(diff,1)}%" if diff > 1 else
+                         f"弱于QQQ {round(diff,1)}%"  if diff < -1 else
+                         f"与QQQ持平 {round(diff,1)}%")
+            else:
+                label = "数据不足"
+            return {
+                "vs_index":    "基准资产（标普500指数）",
+                "vs_sector":   label,
+                "index_name":  "基准",
+                "sector_name": "QQQ",
+                "conclusion":  "基准资产·不适用相对强弱",
+                "is_benchmark": True,
+            }
+        elif ticker == "QQQ":
+            # QQQ和SPY比
+            spy_df = ref_cache.get("SPY")
+            if spy_df is not None and not spy_df.empty:
+                t_ret = (float(df["Close"].iloc[-1]) / float(df["Close"].iloc[-window]) - 1) * 100
+                s_ret = (float(spy_df["Close"].iloc[-1]) / float(spy_df["Close"].iloc[-window]) - 1) * 100
+                diff  = t_ret - s_ret
+                label = (f"强于SPY +{round(diff,1)}%" if diff > 1 else
+                         f"弱于SPY {round(diff,1)}%"  if diff < -1 else
+                         f"与SPY持平 {round(diff,1)}%")
+            else:
+                label = "数据不足"
+            return {
+                "vs_index":    "基准资产（纳斯达克指数）",
+                "vs_sector":   label,
+                "index_name":  "基准",
+                "sector_name": "SPY",
+                "conclusion":  "基准资产·仅供参考",
+                "is_benchmark": True,
+            }
+
+    # 普通标的：用各自对应的基准
     ticker_ret = (float(df["Close"].iloc[-1]) / float(df["Close"].iloc[-window]) - 1) * 100
     results = {}
-    for role, ref_t in refs.items():
+    for role, ref_t in {"index": refs["index"], "sector": refs["sector"]}.items():
         ref_df = ref_cache.get(ref_t)
         if ref_df is None or ref_df.empty:
             results[role] = "数据不足"
@@ -214,15 +365,17 @@ def relative_strength(ticker, df, ref_cache, window=20):
             results[role] = "数据不足"
 
     rs_ok = any("强" in str(v) for v in results.values())
-    return {"vs_index":    results.get("index",  "数据不足"),
-            "vs_sector":   results.get("sector", "数据不足"),
-            "index_name":  refs["index"],
-            "sector_name": refs["sector"],
-            "conclusion":  "支持交易" if rs_ok else "不支持交易"}
+    return {
+        "vs_index":    results.get("index",  "数据不足"),
+        "vs_sector":   results.get("sector", "数据不足"),
+        "index_name":  refs["index"],
+        "sector_name": refs["sector"],
+        "conclusion":  "支持交易" if rs_ok else "不支持交易",
+        "is_benchmark": False,
+    }
 
 
 def market_background(ticker, ref_cache):
-    """使用预拉取的SPY缓存"""
     refs   = REFERENCE_MAP.get(ticker, {"index": "SPY", "sector": "SPY"})
     spy_df = ref_cache.get("SPY")
     if spy_df is not None and not spy_df.empty:
@@ -231,7 +384,7 @@ def market_background(ticker, ref_cache):
         bg = "支持" if spy_price > float(spy_ma20) else "不支持"
     else:
         bg = "数据不足"
-    return {"market": bg, "sector": refs["sector"], "conclusion": bg}
+    return {"market": bg, "sector": refs.get("sector", "SPY"), "conclusion": bg}
 
 
 def key_levels(df):
@@ -239,39 +392,145 @@ def key_levels(df):
     support      = round(float(df["Low"].iloc[-20:].min()),     2)
     confirm      = round(float(df["High"].iloc[-120:-60].max()),2)
     invalidation = round(float(df["Low"].iloc[-60:].min()),     2)
-    # 若support == invalidation，用近10日最低作为短线支撑，避免歧义
     if support == invalidation:
         support = round(float(df["Low"].iloc[-10:].min()), 2)
-    return {"resistance": resistance, "support": support,
-            "confirm": confirm, "invalidation": invalidation}
+    return {
+        "resistance":   resistance,
+        "support":      support,
+        "confirm":      confirm,
+        "invalidation": invalidation,
+    }
 
 
-def trade_type(long_trend, mid_trend, struct_t, rsi_val, price, ma20):
+def calc_risk_reward(price, atr_val, levels, breakout_info=None):
+    """
+    计算风险赔率
+    - 历史新高：用ATR法计算目标
+    - 普通标的：用阻力位法
+    - 加入硬门槛检查
+    """
+    short_stop     = round(price - atr_val * 1.0, 2)
+    mid_stop       = levels["support"]
+    structure_stop = levels["invalidation"]
+
+    # 目标价：历史新高用ATR法，否则用阻力位
+    if breakout_info and breakout_info.get("is_all_time_area"):
+        target1 = round(price + 2 * atr_val, 2)
+        target2 = round(price + 4 * atr_val, 2)
+        target_method = "ATR倍数法（历史新高区域）"
+    else:
+        target1 = levels["resistance"]
+        target2 = round(levels["resistance"] + (levels["resistance"] - mid_stop) * 0.5, 2)
+        target_method = "阻力位法"
+
+    # 目标一有效性检查：距离 < 0.5×ATR 则无效
+    t1_dist = target1 - price
+    t2_dist = target2 - price
+    risk    = price - short_stop
+
+    t1_invalid = t1_dist < 0.5 * atr_val
+    t1_rr = round(t1_dist / risk, 2) if risk > 0 else 0
+    t2_rr = round(t2_dist / risk, 2) if risk > 0 else 0
+
+    # 硬门槛判断
+    if t1_invalid:
+        rr_conclusion = "目标一无效（距离不足0.5ATR）"
+        rr_pass = False
+    elif t1_rr < 1.0:
+        rr_conclusion = "赔率不合格（目标一<1:1）"
+        rr_pass = False
+    elif t2_rr < 2.0:
+        rr_conclusion = "赔率偏低（目标二<2:1），建议等待更好位置"
+        rr_pass = False
+    else:
+        rr_conclusion = f"赔率合格（目标一{t1_rr}:1 / 目标二{t2_rr}:1）"
+        rr_pass = True
+
+    return {
+        "entry":          price,
+        "short_stop":     short_stop,
+        "mid_stop":       mid_stop,
+        "structure_stop": structure_stop,
+        "target1":        target1,
+        "target2":        target2,
+        "target_method":  target_method,
+        "t1_rr":          t1_rr,
+        "t2_rr":          t2_rr,
+        "t1_invalid":     t1_invalid,
+        "rr_pass":        rr_pass,
+        "conclusion":     rr_conclusion,
+        "note":           "⚠️ 止损和目标位为规则近似值，需人工确认后使用",
+    }
+
+
+def trade_type(long_trend, mid_trend, struct_t, rsi_val, price, ma20, rr_pass):
+    """交易类型判断，受盈亏比硬门槛约束"""
+    # 赔率不通过，禁止输出买入/试多
+    if not rr_pass:
+        if "多头" in long_trend:
+            return {
+                "type":     "观望（赔率不足）",
+                "suitable": "暂不适合",
+                "wait":     "是，等待更好位置或回踩",
+                "rr_block": True,
+            }
+        return {"type": "不交易", "suitable": "不适合", "wait": "是", "rr_block": True}
+
     if "多头" in long_trend and "多头" in mid_trend and "上升" in struct_t:
         if price > ma20 * 1.05:
-            return {"type": "突破追涨交易（注意追高风险）", "suitable": "适合", "wait": "是，等回踩确认"}
+            return {"type": "突破追涨", "suitable": "适合", "wait": "是，等回踩确认", "rr_block": False}
         if abs(price - ma20) / ma20 < 0.02:
-            return {"type": "回调低吸交易", "suitable": "适合", "wait": "否，位置合适"}
-        return {"type": "趋势延续交易", "suitable": "适合", "wait": "否"}
+            return {"type": "回调低吸", "suitable": "适合", "wait": "否，位置合适", "rr_block": False}
+        return {"type": "趋势延续", "suitable": "适合", "wait": "否", "rr_block": False}
+
+    if "突破" in struct_t:
+        return {"type": "突破交易", "suitable": "适合", "wait": "是，等收盘确认", "rr_block": False}
+
     if "空头" in long_trend or "空头" in mid_trend:
-        return {"type": "观望", "suitable": "不适合", "wait": "是，等趋势确认"}
+        return {"type": "不交易", "suitable": "不适合", "wait": "是，等趋势确认", "rr_block": False}
+
     if "收敛" in struct_t or "修复" in mid_trend:
-        return {"type": "等待突破方向确认", "suitable": "暂不适合", "wait": "是"}
-    return {"type": "观望", "suitable": "暂不适合", "wait": "是，等信号明确"}
+        return {"type": "等待突破方向确认", "suitable": "暂不适合", "wait": "是", "rr_block": False}
+
+    return {"type": "观望", "suitable": "暂不适合", "wait": "是，等信号明确", "rr_block": False}
 
 
 def event_risk(ticker):
+    """事件风险：明确标注检测局限性"""
+    detected = False
+    event_str = ""
+    risk_level = "低"
+    action = "正常执行"
+
     try:
         cal = yf.Ticker(ticker).calendar
         if cal is not None and not cal.empty:
             ed = cal.iloc[0, 0] if isinstance(cal, pd.DataFrame) else None
             if ed:
                 delta = (pd.Timestamp(ed) - pd.Timestamp.now()).days
-                if 0 <= delta <= 7:  return {"event": f"财报将在{delta}天后发布", "risk": "高",  "action": "事件后再交易"}
-                if 0 <= delta <= 14: return {"event": f"财报将在{delta}天后发布", "risk": "中",  "action": "降低仓位"}
+                if 0 <= delta <= 7:
+                    event_str = f"财报将在{delta}天后发布"
+                    risk_level = "高"
+                    action = "事件后再交易"
+                    detected = True
+                elif 0 <= delta <= 14:
+                    event_str = f"财报将在{delta}天后发布"
+                    risk_level = "中"
+                    action = "降低仓位"
+                    detected = True
     except Exception:
         pass
-    return {"event": "未检测到近期重大事件", "risk": "低", "action": "正常执行"}
+
+    if not detected:
+        event_str = "系统未检测到已知财报事件"
+
+    return {
+        "event":       event_str,
+        "risk":        risk_level,
+        "action":      action,
+        # 明确标注局限性，不说"低风险"
+        "disclaimer":  "⚠️ 系统仅检测财报日期，FOMC/CPI/期权到期等宏观事件需人工确认",
+    }
 
 
 # ── 主分析函数 ───────────────────────────────────────────────
@@ -295,61 +554,79 @@ def analyze_ticker(ticker, ref_cache):
     s60   = calc_slope(df["MA60"].dropna())
     s200  = calc_slope(df["MA200"].dropna())
 
+    # 0. 周期
     trading_cycle = {"cycle": "波段交易（日线为主）", "conclusion": "基于日线数据，适合波段交易"}
     print("  [0] ✓")
 
+    # 1. 市场背景
     mkt = market_background(ticker, ref_cache)
     print("  [1] ✓")
 
+    # 2. 长期趋势
     ma200_dev  = round((price - ma200) / ma200 * 100, 2)
-    long_trend = ("多头"      if price > ma200 and s200 > 0.05 else
-                  "中性偏多"  if price > ma200 else
+    long_trend = ("多头"       if price > ma200 and s200 > 0.05 else
+                  "中性偏多"   if price > ma200 else
                   "方向选择区" if abs(price - ma200) / ma200 < 0.03 else "空头")
     print(f"  [2] {long_trend} ✓")
 
+    # 3. 中期趋势
     mid_trend = ("强多头排列" if price > ma20 and ma20 > ma60 and ma60 > ma200 else
                  "多头修复"   if price > ma20 and ma20 > ma60 else
                  "短线反弹"   if price > ma20 else
                  "中期调整"   if ma20 < ma60  else "空头排列")
     print(f"  [3] {mid_trend} ✓")
 
+    # 4. 价格结构（含创前高处理）
     atr_raw   = calc_atr(df["High"], df["Low"], df["Close"])
-    atr_now   = float(atr_raw.iloc[-1])
-    swing_ord = max(5, min(int(atr_now / price * 1000), 15))
+    atr_val   = float(atr_raw.iloc[-1])
+    swing_ord = max(5, min(int(atr_val / price * 1000), 15))
     highs, lows = find_swing_points(df["Close"], order=swing_ord)
-    struct_t, struct_c = structure_type(highs, lows)
+
+    breakout_info = analyze_breakout(df, highs, lows, atr_val)
+
+    if breakout_info:
+        struct_t = breakout_info["struct_type"]
+        struct_c = breakout_info["struct_conclusion"]
+    else:
+        # 均线兜底：均线多头时不允许输出"下降结构确认"
+        struct_t, struct_c = structure_type_original(highs, lows)
+        if ("下降结构" in struct_t and "确认" in struct_c and
+                "多头" in long_trend and "多头" in mid_trend):
+            struct_t = "结构冲突·均线优先"
+            struct_c = "均线多头排列与摆动点结构冲突，以均线判断为准，需人工复核"
+
     print(f"  [4] {struct_t} ✓")
 
+    # 5. 关键位置
     levels = key_levels(df)
     print("  [5] ✓")
 
+    # 6. 相对强弱
     rs = relative_strength(ticker, df, ref_cache)
     print("  [6] ✓")
 
+    # 7. 量价
     vol = volume_analysis(df)
     print("  [7] ✓")
 
+    # 8. 动量
     mom = momentum_analysis(df)
     print("  [8] ✓")
 
+    # 9. 波动率
     vol_state = volatility_analysis(df)
     print("  [9] ✓")
 
-    trade = trade_type(long_trend, mid_trend, struct_t, mom["rsi_val"], price, ma20)
-    print(f"  [10] {trade['type']} ✓")
-
-    risk = {
-        "entry":          price,
-        "short_stop":     round(float(df["Low"].iloc[-5:].min()),  2),  # 近5日最低
-        "mid_stop":       round(float(df["Low"].iloc[-20:].min()), 2),  # 近20日最低
-        "structure_stop": round(float(df["Low"].iloc[-60:].min()), 2),  # 近60日最低
-        "target1":        levels["resistance"],
-        "target2":        round(levels["resistance"] + (levels["resistance"] - levels["support"]) * 0.5, 2),
-        "note":           "⚠️ 止损和目标位为规则近似值，需人工确认后使用",
-        "conclusion":     "需人工确认",
-    }
+    # 11. 风险赔率（先算，再决定交易类型）
+    risk = calc_risk_reward(price, atr_val, levels, breakout_info)
     print("  [11] ✓")
 
+    # 10. 交易类型（受赔率约束）
+    trade = trade_type(long_trend, mid_trend, struct_t,
+                       mom["rsi_val"], price, ma20, risk["rr_pass"])
+    print(f"  [10] {trade['type']} ✓")
+
+    # 12. 事件风险
     evt = event_risk(ticker)
     print(f"  [12] {evt['risk']} ✓")
 
@@ -364,9 +641,11 @@ def analyze_ticker(ticker, ref_cache):
         "3_mid_trend":  {"ma20": ma20, "ma60": ma60,
                          "slope20": slope_label(s20), "slope60": slope_label(s60),
                          "conclusion": mid_trend},
-        "4_structure":  {"highs":      [(str(d.date()), v) for d, v in highs],
-                         "lows":       [(str(d.date()), v) for d, v in lows],
-                         "type":       struct_t, "conclusion": struct_c},
+        "4_structure":  {"highs":         [(str(d.date()), v) for d, v in highs],
+                         "lows":          [(str(d.date()), v) for d, v in lows],
+                         "type":          struct_t,
+                         "conclusion":    struct_c,
+                         "breakout_info": breakout_info},
         "5_levels":     levels,
         "6_rs":         rs,
         "7_volume":     vol,
@@ -381,22 +660,20 @@ def analyze_ticker(ticker, ref_cache):
 def analyze_all(tickers=None):
     if tickers is None:
         tickers = STOCK_POOL
-
-    # 统一预拉取所有参考数据（只拉一次）
     print("\n[预处理] 拉取参考ETF数据...")
     ref_cache = fetch_all_ref_data()
     print(f"[预处理] 完成，缓存：{list(ref_cache.keys())}")
-
     results = []
     for ticker in tickers:
-        result = analyze_ticker(ticker, ref_cache)
-        results.append(result)
-        time.sleep(random.uniform(1, 2))  # 有了缓存，间隔可以缩短
+        results.append(analyze_ticker(ticker, ref_cache))
+        time.sleep(random.uniform(1, 2))
     return results
 
 
 if __name__ == "__main__":
-    r = analyze_all(["TSLA"])[0]
+    r = analyze_all(["SPY", "TSLA"])[0]
+    bi = r["4_structure"].get("breakout_info")
     print(f"\n✅ {r['ticker']} @ {r['price']}")
-    print(f"   长期：{r['2_long_trend']['conclusion']}")
-    print(f"   中期：{r['3_mid_trend']['conclusion']}")
+    print(f"   结构：{r['4_structure']['type']}")
+    print(f"   突破信息：{bi}")
+    print(f"   赔率：{r['11_risk']['conclusion']}")
