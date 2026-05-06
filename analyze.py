@@ -303,9 +303,9 @@ def analyze_ticker(ticker):
 
     risk = {
         "entry": price,
-        "short_stop":     levels["support"],
-        "mid_stop":       round(float(df["Low"].iloc[-20:].min()), 2),
-        "structure_stop": levels["invalidation"],
+        "short_stop":     round(float(df["Low"].iloc[-5:].min()),  2),  # 近5日最低
+        "mid_stop":       round(float(df["Low"].iloc[-20:].min()), 2),  # 近20日最低
+        "structure_stop": round(float(df["Low"].iloc[-60:].min()), 2),  # 近60日最低
         "target1":        levels["resistance"],
         "target2":        round(levels["resistance"] + (levels["resistance"]-levels["support"])*0.5, 2),
         "note":           "⚠️ 止损和目标位为规则近似值，需人工确认后使用",
