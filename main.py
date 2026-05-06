@@ -4,22 +4,21 @@
 
 import os
 import sys
-import json
 from analyze import analyze_all, STOCK_POOL
 from chart import generate_chart
 from email_sender import send_email
 
 CHART_DIR = "/tmp/charts"
 
-def main():
-    # 读取股票列表（支持命令行传入额外标的）
-    tickers = list(STOCK_POOL)
-    if len(sys.argv) > 1:
-        extra = [t.strip().upper() for t in sys.argv[1:]]
-        tickers = list(dict.fromkeys(tickers + extra))  # 去重保序
-        print(f"本次分析标的：{tickers}")
 
-    # 读取邮件配置
+def main():
+    # 安全读取额外股票（从环境变量，不从命令行，避免注入）
+    tickers = list(STOCK_POOL)
+    extra_env = os.environ.get("EXTRA_TICKERS", "").strip()
+    if extra_env:
+        extra = [t.strip().upper() for t in extra_env.split() if t.strip().isalpha() or "-" in t]
+        tickers = list(dict.fromkeys(tickers + extra))
+
     gmail_user     = os.environ.get("GMAIL_USER", "")
     gmail_password = os.environ.get("GMAIL_APP_PASSWORD", "")
 
@@ -32,7 +31,7 @@ def main():
     print(f"  标的：{', '.join(tickers)}")
     print(f"{'='*60}")
 
-    # 1. 分析
+    # 1. 分析（内部统一预拉取参考数据）
     results = analyze_all(tickers)
 
     # 2. 生成图表
@@ -53,6 +52,7 @@ def main():
         gmail_password=gmail_password,
         to_addr=gmail_user,
     )
+
 
 if __name__ == "__main__":
     main()
